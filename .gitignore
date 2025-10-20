@@ -1,15 +1,23 @@
-# Remix compiler artifacts
-**/artifacts/
-**/artifacts/**
+# Node modules
+/node_modules
 
-# Remix plugin state folders
-deps/
-states/
+# Compilation output
+/dist
 
-# Debug info
-*.dbg.json
-*.tsbuildinfo
+# pnpm deploy output
+/bundle
 
-# Optional
+# Hardhat Build Artifacts
+/artifacts
+
+# Hardhat compilation (v2) support directory
+/cache
+
+# Typechain output
+/types
+
+# Hardhat coverage reports
+/coverage
+
 .env
-.env.local
+.venv
