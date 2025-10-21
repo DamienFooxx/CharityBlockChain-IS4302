@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+/**
+A modular, oracle-controlled voting contract used to verify off-chain charitable work 
+across three evidence streams (Receipts, Attendance, Photos). 
 
-/*
-Used by Oracle
-Plug-in that tallies “yes/no” by quadratic weight, with commit-reveal.
-Supports three evidence streams per event: Receipts, Attendance, Photos.
-Oracle is the sole controller for phase transitions and assignments.
+This contract enforces decentralized verification logic via a commit–reveal scheme and 
+quadratic voting, ensuring that no single donor or colluding group can dominate outcomes.
+ 
+Each `VotingModule` instance corresponds to one `CharityEvent` identified by `eventId`. 
+Donors are randomly assigned to review one evidence type (stream) by the Oracle.
+ 
+The Oracle is the sole controller that:
+- Assigns voters to evidence streams.
+- Advances phases (Commit → Reveal → Finalized).
+- Reads the final results to decide whether the CharityEvent passes verification.
 */
+
 import "./PledgeBook.sol";
 import "./DonationEscrow.sol";
 import "./DonorRegistry.sol";

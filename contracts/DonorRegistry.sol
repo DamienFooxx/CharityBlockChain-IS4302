@@ -5,5 +5,6 @@ Donors can use this to interact with charities and the Astrea System
 */
 
 contract DonorRegistry{
-    
+    // I need help to define these functions for the VotingModule.sol /DamienFooxx
+    function isRegistered(address donor) external view returns (bool);
 }

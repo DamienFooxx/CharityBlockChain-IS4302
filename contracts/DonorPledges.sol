@@ -5,5 +5,8 @@ This will allow the flexbility for Donors to change their donation amount before
 */
 
 contract DonorPledges{
-    
+
+    // I need help to define these functions for the VotingModule.sol /DamienFooxx
+    function hasPledged(address donor, bytes32 eventId) external view returns (bool);
+    function getPledgedAmount(address donor, bytes32 eventId) external view returns (uint256);
 }
