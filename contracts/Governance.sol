@@ -20,7 +20,6 @@ contract Governance is AccessControl, Pausable {
     // ADMIN_ROLE is for day-to-day administration, like updating parameters or registries.
     // PAUSER_ROLE can trigger the emergency pause on this contract and others.
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // --- System Parameters ---
@@ -38,15 +37,15 @@ contract Governance is AccessControl, Pausable {
     event ContractAddressUpdated(bytes32 indexed name, address newAddress);
 
     // --- Constructor ---
-    constructor(address initialOracle, address initialAdmin, address initialPauser, uint256 initialQuorumBps) {
+    constructor(address initialOracle, address initialPauser, uint256 initialQuorumBps) {
         // Grant the deployer the DEFAULT_ADMIN_ROLE.
         // This role can grant/revoke all other roles.
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         // Assign initial roles
         _grantRole(ORACLE_ROLE, initialOracle);
-        _grantRole(ADMIN_ROLE, initialAdmin);
         _grantRole(PAUSER_ROLE, initialPauser);
+        _grantRole(PAUSER_ROLE, msg.sender); // Deployer can also pause
         
         // Set initial parameters
         globalQuorumBps = initialQuorumBps;
@@ -60,7 +59,7 @@ contract Governance is AccessControl, Pausable {
      */
     function setGlobalQuorum(uint256 _newQuorumBps)
         external
-        onlyRole(ADMIN_ROLE)
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
     {
         require(_newQuorumBps <= 10000, "Bps > 100%");
@@ -76,7 +75,7 @@ contract Governance is AccessControl, Pausable {
      */
     function setContractAddress(string calldata _name, address _contractAddress)
         external
-        onlyRole(ADMIN_ROLE)
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
     {
         require(_contractAddress != address(0), "Zero address");
@@ -96,7 +95,7 @@ contract Governance is AccessControl, Pausable {
     /**
      * @dev Lifts the emergency pause.
      */
-    function unpause() external onlyRole(ADMIN_ROLE) {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
