@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./Governance.sol";
+import "./Registry.sol";
 
 /**
  * @title CharityRegistry
@@ -9,10 +9,7 @@ import "./Governance.sol";
  * This contract handles the registration of legitimate charities and maintains
  * their approval status for participation in the platform.
  */
-contract CharityRegistry {
-    
-    // --- State Variables ---
-    Governance public governance;
+contract CharityRegistry is Registry {
     
     // Charity profile structure
     struct CharityProfile {
@@ -42,11 +39,6 @@ contract CharityRegistry {
     event TreasuryAssigned(uint256 indexed orgId, address treasury);
     
     // Modifiers
-    modifier onlyAdmin() {
-        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE(), msg.sender), "Not admin");
-        _;
-    }
-    
     modifier onlyOracle() {
         require(governance.hasRole(governance.ORACLE_ROLE(), msg.sender), "Not oracle");
         _;
@@ -58,9 +50,7 @@ contract CharityRegistry {
     }
     
     // Constructor
-    constructor(address _governance) {
-        require(_governance != address(0), "Invalid governance address");
-        governance = Governance(_governance);
+    constructor(address _governance) Registry(_governance) {
     }
     
     // --- Registration Functions ---
@@ -73,6 +63,8 @@ contract CharityRegistry {
      */
     function registerCharity(string calldata name, string calldata metaCID) 
         external 
+        whenNotPaused
+        whenSystemNotPaused
         returns (uint256 orgId) 
     {
         require(bytes(name).length > 0, "Name cannot be empty");
@@ -105,6 +97,8 @@ contract CharityRegistry {
      */
     function updateProfile(uint256 orgId, string calldata metaCID) 
         external 
+        whenNotPaused
+        whenSystemNotPaused
         charityExists(orgId) 
     {
         require(bytes(metaCID).length > 0, "MetaCID cannot be empty");
@@ -129,6 +123,8 @@ contract CharityRegistry {
     function setApproval(uint256 orgId, bool isApproved) 
         external 
         onlyAdmin 
+        whenNotPaused
+        whenSystemNotPaused
         charityExists(orgId) 
     {
         bool wasApproved = profiles[orgId].approved;
@@ -163,6 +159,8 @@ contract CharityRegistry {
     function setTreasury(uint256 orgId, address treasury) 
         external 
         onlyAdmin 
+        whenNotPaused
+        whenSystemNotPaused
         charityExists(orgId) 
     {
         require(treasury != address(0), "Invalid treasury address");
