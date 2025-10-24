@@ -29,6 +29,9 @@ contract Oracle {
     /// @notice eventId => VotingModule address
     mapping(bytes32 => address) public modules;
 
+    /// @notice eventId => [stream 0 weight, stream 1 weight, stream 2 weight]
+    mapping(bytes32 => uint256[3]) public streamAssignedWeight;
+
     /// @notice Optional assignment seed (can be rotated by an authorized oracle)
     bytes32 public assignmentSeed;
 
@@ -187,7 +190,7 @@ contract Oracle {
         require(pledgesAddr != address(0), "Oracle: DonorPledges not set");
 
         // 1) Read pledged amount and compute quadratic weight
-        uint256 pledged = IDonorPledges(pledgesAddr).getPledgedAmount(voter, eventId);
+        uint256 pledged = DonorPledges(pledgesAddr).getPledgedAmount(voter, eventId);
         uint256 w = sqrt(pledged * 1e18); 
 
         // 2) Choose stream with minimum assigned weight; break ties with deterministic seed

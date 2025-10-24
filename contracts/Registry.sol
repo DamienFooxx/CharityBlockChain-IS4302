@@ -29,7 +29,7 @@ abstract contract Registry is Pausable {
      * granted in the associated Governance contract.
      */
     modifier onlyAdmin() {
-        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller is not admin");
+        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE(), msg.sender), "Registry: Caller is not admin");
         _;
     }
 
@@ -44,7 +44,7 @@ abstract contract Registry is Pausable {
      * @dev Only allows accounts with the DEFAULT_ADMIN_ROLE (in Governance) to unpause.
      */
     function _authorizeUnpause(address /* account */) internal view {
-        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller cannot unpause");
+        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE(), msg.sender), "Registry: Caller cannot unpause");
     }
 
     /**
