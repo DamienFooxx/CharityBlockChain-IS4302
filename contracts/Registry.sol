@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./Governance.sol";
 
 /**
@@ -29,22 +29,22 @@ abstract contract Registry is Pausable {
      * granted in the associated Governance contract.
      */
     modifier onlyAdmin() {
-        require(governance.hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller is not admin");
+        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller is not admin");
         _;
     }
 
     /**
      * @dev Only allows accounts with the PAUSER_ROLE (in Governance) to pause.
      */
-    function _authorizePause(address /* account */) internal view override {
+    function _authorizePause(address /* account */) internal view {
         require(governance.hasRole(governance.PAUSER_ROLE(), msg.sender), "Registry: Caller cannot pause");
     }
 
     /**
      * @dev Only allows accounts with the DEFAULT_ADMIN_ROLE (in Governance) to unpause.
      */
-    function _authorizeUnpause(address /* account */) internal view override {
-        require(governance.hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller cannot unpause");
+    function _authorizeUnpause(address /* account */) internal view {
+        require(governance.hasRole(governance.DEFAULT_ADMIN_ROLE, msg.sender), "Registry: Caller cannot unpause");
     }
 
     /**
