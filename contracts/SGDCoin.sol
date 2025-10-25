@@ -115,23 +115,4 @@ contract SGDCoin {
         emit Burn(from, amount);
         emit Transfer(from, address(0), amount);
     }
-    
-    /**
-     * @dev Get the balance of the specified address
-     * @param account The address to query the balance of
-     * @return The balance of the specified address
-     */
-    function balanceOf(address account) public view returns (uint256) {
-        return balanceOf[account];
-    }
-    
-    /**
-     * @dev Get the allowance of the specified spender
-     * @param account The address of the token owner
-     * @param spender The address of the spender
-     * @return The allowance of the specified spender
-     */
-    function allowance(address account, address spender) public view returns (uint256) {
-        return allowance[account][spender];
-    }
 }

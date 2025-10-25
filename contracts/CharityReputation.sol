@@ -120,7 +120,7 @@ contract CharityReputation {
         rep.lastUpdated = block.timestamp;
         
         emit EventOutcomeRecorded(orgId, eventId, success);
-        emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : -SCORE_DECREMENT);
+        // emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : -SCORE_DECREMENT);
     }
     
     /**
@@ -183,7 +183,7 @@ contract CharityReputation {
         
         rep.lastUpdated = block.timestamp;
         
-        emit ReputationUpdated(orgId, rep.score, passed ? 15 : -25);
+        // emit ReputationUpdated(orgId, rep.score, passed ? 15 : -25);
     }
     
     // --- View Functions ---
