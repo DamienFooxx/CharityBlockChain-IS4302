@@ -33,5 +33,5 @@ interface CharityEvent{
      * @notice Charity requests another verification round after updating evidence off-chain.
      * @dev Oracle remains the ultimate gatekeeper; this does not auto-start a retry.
      */
-    function requestRetry()
+    function requestRetry() external;
 }
