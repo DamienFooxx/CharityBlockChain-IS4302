@@ -1,32 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/*
-A reusable token escrow shared by many events.
-*/
+contract EscrowVault{
 
-interface EscrowVault{
-    // I need help to define these functions for the VotingModule.sol /DamienFooxx
+    // Track which event IDs have been released
+    mapping(bytes32 => bool) public released;
+
+    // Track who the funds were released to
+    mapping(bytes32 => address) public releaseRecipient;
+
     /**
-    Purpose
-        Send locked funds to the beneficiary if and only if the event is verified.
-    Access
-        Callable by Oracle (or anyone), but the internal check must pass.
-    Preconditions (inside EscrowVault)
-        to != address(0).
-        CharityEvent(eventAddr).verified() == true (direct read or via Governance registry).
-        Prevent double release: track released[eventId] == false.
-        Enough balance for the event (track deposits per eventId).
-    State changes
-        Mark released[eventId] = true.
-        Transfer assets to to.
-    Events
-        Released(eventId, to, amount).
-    Failure modes
-        Revert if not verified, already released, or insufficient funds.
-    Security
-        Use Checks-Effects-Interactions
-        Consider a pull pattern if beneficiaries are contracts.
+     * @dev This is the function Oracle.sol will call.
+     * We just record that it was called successfully.
      */
-    function releaseIfVerified(bytes32 eventId, address to) external;
+    function releaseIfVerified(bytes32 eventId, address to) external {
+        released[eventId] = true;
+        releaseRecipient[eventId] = to;
+    }
 }

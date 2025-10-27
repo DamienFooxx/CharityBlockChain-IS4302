@@ -96,7 +96,7 @@ contract CharityEvent is Registry {
         address _beneficiary,
         uint256 _fundingGoal,
         uint256 _fundingDeadline,
-        string calldata _description
+        string memory _description
     ) Registry(_governance) {
         require(_eventId != bytes32(0), "Invalid event ID");
         require(_orgId > 0, "Invalid org ID");
@@ -126,13 +126,6 @@ contract CharityEvent is Registry {
      */
     function id() external view returns (bytes32) {
         return eventId;
-    }
-    
-    /**
-     * @dev Get the beneficiary address for disbursement
-     */
-    function beneficiary() external view returns (address) {
-        return beneficiary;
     }
     
     /**
@@ -245,14 +238,7 @@ contract CharityEvent is Registry {
     function fundingDeadlinePassed() external view returns (bool) {
         return block.timestamp >= fundingDeadline;
     }
-    
-    /**
-     * @dev Get verification status
-     */
-    function verified() external view returns (bool) {
-        return verified;
-    }
-    
+
     /**
      * @dev Get last per-stream verification results
      */
