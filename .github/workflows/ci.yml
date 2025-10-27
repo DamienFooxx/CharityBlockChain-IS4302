@@ -3,23 +3,18 @@ name: Solidity CI
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push events for any branch
+  # Triggers the workflow on push events for main
   push:
-    branches: [ "**" ]
-  # Triggers the workflow on pull request events targeting any branch
+    branches: [ "main" ]
+  # Triggers the workflow on pull request events targeting main
   pull_request:
-    branches: [ "**" ]
+    branches: [ "main" ]
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This job is named "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Step 1: Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      # Step 1: Checks-out repository under $GITHUB_WORKSPACE
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -27,21 +22,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # We'll use Node.js version 18. You can change this if your project needs a different version.
           node-version: 18
 
       # Step 3: Install project dependencies using npm
-      # This runs "npm install" to get hardhat, ethers, etc.
       - name: Install dependencies
         run: npm install
 
       # Step 4: Compile the Solidity contracts
-      # This is the command you've been running
       - name: Compile contracts
         run: npx hardhat compile
 
       # Step 5: Run the tests
-      # This runs "npx hardhat test". If you don't have tests,
-      # this step might fail, or you can remove it for now.
       - name: Run tests
         run: npx hardhat test
