@@ -294,6 +294,7 @@ contract CharityEvent is Registry {
     /**
      * @dev Transition to a new phase
      */
+    function requestRetry() external;
     function _transitionPhase(EventPhase newPhase) internal {
         EventPhase oldPhase = phase;
         phase = newPhase;
