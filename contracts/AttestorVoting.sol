@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./Governance.sol";
-import "./ERC20.sol";
+import "./SGDCoin.sol";
 import "./DonorVoting.sol";
 
 /**
@@ -20,10 +20,9 @@ import "./DonorVoting.sol";
  */
 contract AttestorVoting {
 
-    // --- State Variables ---
-
+    // State Variables
     Governance public immutable governance;
-    ERC20 public immutable stakeToken; // The ERC20 token used for staking/rewards
+    SGDCoin public immutable stakeToken; // The ERC20 token used for staking/rewards
 
     uint8 public constant NUM_STREAMS = 3;
     uint256 public constant RAY = 1e27; // For high-precision reward calculation
@@ -35,35 +34,35 @@ contract AttestorVoting {
     uint256 public revealDeadline;
     uint256 public challengeWindow; // Delay (in seconds) after settlement before claiming
 
-    // --- Oracle-Set Parameters ---
+    // Oracle-Set Parameters
     uint256 public sigmaMin; // Minimum stake
     uint256 public sigmaMax; // Maximum stake (0 = no cap)
-    uint256 public tau;      // Reward pool divisor (Pool / tau)
+    uint256 public tau; // Reward pool divisor (Pool / tau)
     bytes32 public eligibilityRoot; // Merkle root of eligible attestors
 
-    // --- Reward Pools (Internal Accounting) ---
+    // Reward Pools (Internal Accounting)
     uint256 public RT; // Reward Pool for "True" (Pass) outcomes
     uint256 public RF; // Reward Pool for "False" (Fail) outcomes
 
-    // --- Attestor Data ---
-    mapping(address => uint8) public assignedStream;   // attestor => stream
-    mapping(address => bool) public isAssigned;       // attestor => bool
-    mapping(address => bytes32) public commitments;    // attestor => hash
-    mapping(address => uint256) public stakes;         // attestor => stake amount
-    mapping(address => bool) public revealed;         // attestor => bool
-    mapping(address => bool) public revealedChoice;   // attestor => choice (true/false)
-    mapping(address => bool) public hasClaimed;       // attestor => bool
+    // Attestor Data
+    mapping(address => uint8) public assignedStream; // attestor => stream
+    mapping(address => bool) public isAssigned; // attestor => bool
+    mapping(address => bytes32) public commitments; // attestor => hash
+    mapping(address => uint256) public stakes; // attestor => stake amount
+    mapping(address => bool) public revealed; // attestor => bool
+    mapping(address => bool) public revealedChoice; // attestor => choice (true/false)
+    mapping(address => bool) public hasClaimed; // attestor => bool
 
-    // --- Finalization & Settlement Data ---
+    // Finalization & Settlement Data
     struct Tally {
         uint256 passStake; // Total stake from attestors who voted "Pass" (True)
         uint256 failStake; // Total stake from attestors who voted "Fail" (False)
     }
 
     struct Settlement {
-        bool settled;            // True if settleStream has been called
-        bool donorOutcomeTrue;   // The "truth" from the DonorVoting module
-        uint256 settledAt;       // Timestamp of settlement (for challenge window)
+        bool settled; // True if settleStream has been called
+        bool donorOutcomeTrue; // The "truth" from the DonorVoting module
+        uint256 settledAt; // Timestamp of settlement (for challenge window)
         uint256 rewardPerStakeRay; // Payout per stake (using RAY precision)
         uint256 winnersStake;
         uint256 losersStake;
@@ -72,7 +71,9 @@ contract AttestorVoting {
     Tally[NUM_STREAMS] public tallies;
     Settlement[NUM_STREAMS] public settlements;
 
-    // --- Events ---
+    /**
+    * Events
+     */
 
     // Oracle-facing events
     event SigmaBoundsUpdated(uint256 minSigma, uint256 maxSigma);
@@ -99,7 +100,7 @@ contract AttestorVoting {
     event Claimed(address indexed attestor, uint8 indexed stream, uint256 payout);
 
 
-    // --- Constructor ---
+    // Constructor
 
     /**
      * @dev Sets up the module with its dependencies.
@@ -109,12 +110,12 @@ contract AttestorVoting {
     constructor(address _governance, address _stakeToken) {
         require(_governance != address(0) && _stakeToken != address(0), "AV: Zero address dependency");
         governance = Governance(_governance);
-        stakeToken = ERC20(_stakeToken);
+        stakeToken = SGDCoin(_stakeToken);
         phase = Phase.Pending;
         tau = 1; // Default to 1 to avoid division by zero
     }
 
-    // --- Modifiers ---
+    // Modifiers
 
     /**
      * @dev Throws if called by any account other than the Oracle.
@@ -132,7 +133,7 @@ contract AttestorVoting {
         _;
     }
 
-    // --- Oracle-Facing Functions ---
+    // Oracle-Facing Functions
 
     /**
      * @notice (Oracle) Sets minimum and maximum stake ("sigma") bounds.
@@ -149,7 +150,6 @@ contract AttestorVoting {
 
     /**
      * @notice (Oracle) Sets the reward pacing divisor `τ`.
-     * @dev See interface documentation.
      */
     function setTau(uint256 _tau) external onlyOracle {
         require(_tau > 0, "AV: Tau must be > 0");
@@ -281,7 +281,7 @@ contract AttestorVoting {
             s.rewardPerStakeRay = (totalReward * RAY) / s.winnersStake;
         } else {
             s.rewardPerStakeRay = 0;
-            // Note: If winnersStake is 0, totalReward is effectively
+            // If winnersStake is 0, totalReward is effectively
             // returned to the pools (by not being paid out).
         }
 
@@ -295,7 +295,7 @@ contract AttestorVoting {
         );
     }
 
-    // --- Attestor-Facing Functions ---
+    // Attestor-Facing Functions
 
     /**
      * @notice (Attestor) Commit a vote with stake and eligibility proof.
@@ -383,7 +383,7 @@ contract AttestorVoting {
         // 2. Check challenge window
         require(block.timestamp >= s.settledAt + challengeWindow, "AV: Challenge window active");
 
-        // 3. Mark as claimed *before* transfer (Checks-Effects-Interactions)
+        // 3. Mark as claimed before transfer (Checks-Effects-Interactions)
         hasClaimed[msg.sender] = true;
 
         // 4. Determine payout
@@ -408,7 +408,7 @@ contract AttestorVoting {
     }
 
 
-    // --- Internal Functions ---
+    // Internal Functions
 
     /**
      * @dev Internal function called when moving to the Finalized phase.

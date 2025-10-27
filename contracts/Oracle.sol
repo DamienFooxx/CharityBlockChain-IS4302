@@ -25,18 +25,19 @@ contract Oracle {
     bytes32 public voterAssignmentSeed;
     bytes32 public attestorAssignmentSeed;
 
-    // Keep a record of assignments (auditable)
+    // Keep a record of assignments
     mapping(bytes32 => mapping(address => uint8)) public voterStream; // eventId => voter => stream
     mapping(bytes32 => mapping(address => bool))  public voterIsAssigned;
     mapping(bytes32 => mapping(address => uint8)) public attestorStream; // eventId => attestor => stream
     mapping(bytes32 => mapping(address => bool))  public attestorIsAssigned;
     // Track the active round and module history per event
     mapping(bytes32 => uint256) public currentRound;
-    mapping(bytes32 => address[]) public donorRounds;     // donorRounds[eventId][round] = DonorVoting addr
-    mapping(bytes32 => address[]) public attestorRounds;  // attestorRounds[eventId][round] = AttestorVoting addr
+    mapping(bytes32 => address[]) public donorRounds; // donorRounds[eventId][round] = DonorVoting addr
+    mapping(bytes32 => address[]) public attestorRounds; // attestorRounds[eventId][round] = AttestorVoting addr
 
-
-    // -------------------- Events --------------------
+    /**
+    * Events
+    */
     event ModulesSet(bytes32 indexed eventId, address donor, address attestor, address charity);
     event VoterAssigned(bytes32 indexed eventId, address indexed voter, uint8 stream);
     event AttestorAssigned(bytes32 indexed eventId, address indexed attestor, uint8 stream);
@@ -48,7 +49,9 @@ contract Oracle {
     event RetryRequested(bytes32 indexed eventId, address requestedBy);
     event RetryStarted(bytes32 indexed eventId, uint256 newRound, address donor, address attestor);
 
-    // -------------------- Modifiers --------------------
+    /**
+    * Modifiers
+     */
     modifier onlyOracle() {
         require(governance.hasRole(ORACLE_ROLE, msg.sender), "OracleAstraea: not oracle");
         _;
@@ -90,14 +93,14 @@ contract Oracle {
         address newDonor,
         address newAttestor,
         uint256 donorCommit, uint256 donorReveal,
-        uint256 attCommit,   uint256 attReveal
+        uint256 attCommit, uint256 attReveal
     ) external onlyOracle {
         require(canStartRetry(eventId), "OracleAstraea: retry not allowed");
 
         require(newDonor != address(0) && newAttestor != address(0), "OracleAstraea: zero module");
 
-        // Rotate seeds to reshuffle assignments for the new round (optional but recommended)
-        voterAssignmentSeed    = keccak256(abi.encodePacked(voterAssignmentSeed, eventId, blockhash(block.number - 1)));
+        // Rotate seeds to reshuffle assignments for the new round
+        voterAssignmentSeed = keccak256(abi.encodePacked(voterAssignmentSeed, eventId, blockhash(block.number - 1)));
         attestorAssignmentSeed = keccak256(abi.encodePacked(attestorAssignmentSeed, eventId, blockhash(block.number - 1)));
         emit SeedsUpdated(voterAssignmentSeed, attestorAssignmentSeed);
 
@@ -119,7 +122,9 @@ contract Oracle {
         emit RetryStarted(eventId, round, newDonor, newAttestor);
     }
 
-    // Functions for Oracle
+    /**
+    * Functions for Oracle
+    */
     function assignVoter(bytes32 eventId, address voter, uint8 stream)
         public
         onlyOracle
@@ -200,7 +205,9 @@ contract Oracle {
         AttestorVoting(modules[eventId].attestor).setChallengeWindow(seconds_);
     }
 
-    // Admin functions
+    /**
+    * Admin functions
+     */
     function setDeadlines(
         bytes32 eventId,
         uint256 donorCommit, uint256 donorReveal,
@@ -238,7 +245,9 @@ contract Oracle {
         emit RetryRequested(eventId, requester);
     }
 
-    // -------------------- Settlement & Disbursement --------------------
+    /**
+    * Settlement & Disbursement
+    */
 
     /**
      * @notice Settle attestors for each stream against the donor truth (must be finalized).
@@ -264,19 +273,18 @@ contract Oracle {
 
     /**
      * @notice If donor layer says all streams passed, mark event verified and release escrow.
-     * WISHFUL: CharityEvent.setVerified() flips a flag that EscrowVault.releaseIfVerified() checks.
      */
     function disburseIfVerified(bytes32 eventId) external onlyOracle eventExists(eventId) {
         (bool decided, bool passed, bool[3] memory perStream) = DonorVoting(modules[eventId].donor).overallResult();
         require(decided, "OracleAstraea: donor not decided");
         require(passed,  "OracleAstraea: not verified");
 
-        // Mark verified at the project/event contract (wishful)
+        // Mark verified at the project/event contract
         if (modules[eventId].charity != address(0)) {
             CharityEvent(modules[eventId].charity).setVerified(true, perStream);
         }
 
-        // Release funds from Escrow to the event's beneficiary (wishful)
+        // Release funds from Escrow to the event's beneficiary
         address escrow = governance.getContractAddress("EscrowVault");
         require(escrow != address(0), "OracleAstraea: EscrowVault not set");
 

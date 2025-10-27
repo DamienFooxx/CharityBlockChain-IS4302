@@ -25,41 +25,41 @@ contract DonorVoting {
     Governance public immutable governance;
     DonorRegistry public immutable donorRegistry;
     DonorPledges public immutable donorPledges;
-    DonorRanking public immutable donorRanking; // NEW: For reputation weight
+    DonorRanking public immutable donorRanking;
 
     // The eventId this voting module is associated with.
     bytes32 public immutable eventId;
 
     uint8 public constant NUM_STREAMS = 3;
-
+ 
     enum Phase { Pending, Commit, Reveal, Finalized }
     Phase public phase;
 
     uint256 public commitDeadline;
     uint256 public revealDeadline;
 
-    // --- Voter Assignment ---
+    // Voter Assignment
     mapping(address => uint8) public assignedStream; // voter => streamId
-    mapping(address => bool) public isAssigned;     // voter => bool
+    mapping(address => bool) public isAssigned; // voter => bool
 
     // Total *weighted* pledge (sum) of all voters assigned to each stream.
     // Used to calculate quorum participation.
     mapping(uint8 => uint256) public totalPossibleWeight;
 
-    // --- Voting Data ---
+    // Voting Data
     mapping(address => bytes32) public commitments; // voter => keccak256(choice, salt)
-    mapping(address => bool) public revealed;      // voter => bool
+    mapping(address => bool) public revealed; // voter => bool
 
-    // --- Finalization Data ---
+    // Finalization Data
     struct Tally {
-        uint256 pass;         // Total weighted votes for "Pass"
-        uint256 fail;         // Total weighted votes for "Fail"
-        uint256 totalWeight;  // Total participating weighted votes (pass + fail)
+        uint256 pass; // Total weighted votes for "Pass"
+        uint256 fail; // Total weighted votes for "Fail"
+        uint256 totalWeight; // Total participating weighted votes (pass + fail)
     }
 
     Tally[NUM_STREAMS] public tallies;
     bool[NUM_STREAMS] public streamPassed; // Final decision per stream
-    bool public overallPassed;            // Final aggregate decision (true if all streams passed)
+    bool public overallPassed; // Final aggregate decision (true if all streams passed)
 
     // --- Events ---
     event VoterAssigned(address indexed voter, uint8 stream);
@@ -69,29 +69,30 @@ contract DonorVoting {
     event Revealed(address indexed voter, uint8 indexed stream, bool choice, uint256 weight);
     event Finalized(bool overallPassed, bool[3] streamResults);
 
-
-    // --- Constructor ---
+    /**
+    * Constructor
+     */
 
     /**
      * @dev Sets up the voting module for a specific event.
      * @param _governance Address of the main Governance contract.
      * @param _donorRegistry Address of the DonorRegistry contract.
      * @param _donorPledges Address of the DonorPledges contract.
-     * @param _donorRanking Address of the DonorRanking contract. (NEW)
+     * @param _donorRanking Address of the DonorRanking contract.
      * @param _eventId The unique ID of the event this module serves.
      */
     constructor(
         address _governance,
         address _donorRegistry,
         address _donorPledges,
-        address _donorRanking, // NEW
+        address _donorRanking,
         bytes32 _eventId
     ) {
         require(
             _governance != address(0) && 
             _donorRegistry != address(0) && 
             _donorPledges != address(0) &&
-            _donorRanking != address(0), // NEW
+            _donorRanking != address(0),
             "DonorVoting: Zero address dependency"
         );
         require(_eventId != bytes32(0), "DonorVoting: Zero eventId");
@@ -99,12 +100,14 @@ contract DonorVoting {
         governance = Governance(_governance);
         donorRegistry = DonorRegistry(_donorRegistry);
         donorPledges = DonorPledges(_donorPledges);
-        donorRanking = DonorRanking(_donorRanking); // NEW
+        donorRanking = DonorRanking(_donorRanking);
         eventId = _eventId;
         phase = Phase.Pending;
     }
 
-    // --- Modifiers ---
+    /** 
+    * Modifiers
+     */
 
     /**
      * @dev Throws if called by any account other than the Oracle.
@@ -122,12 +125,13 @@ contract DonorVoting {
         _;
     }
 
-    // --- Oracle-Facing Functions ---
+    /**
+    * Oracle-Facing Functions
+     */
 
     /**
      * @notice (Oracle) Assign a donor to exactly one evidence stream.
-     * @dev See interface documentation.
-     * This function now calculates the voter's weighted vote power.
+     * This function calculates the voter's weighted vote power.
      */
     function assignVoter(address voter, uint8 stream) external onlyOracle inPhase(Phase.Pending) {
         require(stream < NUM_STREAMS, "DonorVoting: Invalid stream");
@@ -137,20 +141,17 @@ contract DonorVoting {
         uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(voter, eventId);
         require(pledgedAmount > 0, "DonorVoting: No pledge weight");
 
-        // --- MODIFIED LOGIC ---
         // Get reputation multiplier (e.g., 100 for 1x, 110 for 1.1x)
         uint256 weightMultiplier = donorRanking.getVotingWeight(voter);
         
         // Calculate final weighted vote power
         uint256 finalWeight = (pledgedAmount * weightMultiplier) / 100;
-        // --- END MODIFIED LOGIC ---
-
 
         // Record assignment
         isAssigned[voter] = true;
         assignedStream[voter] = stream;
 
-        // Add this voter's *final* weight to the total possible for this stream (for quorum)
+        // Add this voter's final weight to the total possible for this stream (for quorum)
         totalPossibleWeight[stream] += finalWeight;
 
         emit VoterAssigned(voter, stream);
@@ -193,7 +194,9 @@ contract DonorVoting {
         emit PhaseAdvanced(phase);
     }
 
-    // --- Donor-Facing Functions (Commit/Reveal) ---
+    /**
+    * Donor-Facing Functions (Commit/Reveal)
+     */
 
     /**
      * @notice (Donor) Commit a vote.
@@ -225,7 +228,6 @@ contract DonorVoting {
 
         revealed[msg.sender] = true;
 
-        // --- MODIFIED LOGIC ---
         // Get voter's base weight (pledge amount)
         uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(msg.sender, eventId);
         if (pledgedAmount == 0) {
@@ -238,8 +240,6 @@ contract DonorVoting {
         
         // Calculate final weighted vote power
         uint256 finalWeight = (pledgedAmount * weightMultiplier) / 100;
-        // --- END MODIFIED LOGIC ---
-
 
         // Add vote to the correct stream's tally
         uint8 stream = assignedStream[msg.sender];
@@ -255,7 +255,9 @@ contract DonorVoting {
         emit Revealed(msg.sender, stream, _choice, finalWeight); // Use finalWeight
     }
 
-    // --- Internal Logic ---
+    /**
+    * Internal logic
+     */
 
     /**
      * @dev Internal function to compute tallies and set final outcomes.
@@ -263,7 +265,7 @@ contract DonorVoting {
      *
      * Rules:
      * 1. Quorum: Participating vote weight must meet `globalQuorumBps`
-     * of the total *possible* vote weight for that stream.
+     * of the total possible vote weight for that stream.
      * 2. Majority: `pass` weight must be strictly greater than `fail` weight.
      *
      * A stream passes iff BOTH Quorum and Majority are met.
@@ -301,7 +303,9 @@ contract DonorVoting {
         emit Finalized(_overallPassed, streamPassed);
     }
 
-    // --- View Functions (Oracle-Facing) ---
+    /** 
+    * View Functions (Oracle-Facing)
+     */
 
     /**
      * @notice Read the per-stream decision (donor "truth") once finalized.
