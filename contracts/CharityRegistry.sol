@@ -164,26 +164,58 @@ contract CharityRegistry is Registry {
     
     // --- View Functions ---
     
+    // removed unnecessary getters; use public getters on mappings/state instead
+
+    // --- Compatibility Wrapper API ---
     /**
-     * @dev Get charity profile information
-     * @param orgId The organization ID
-     * @return profile The charity profile
+     * @notice Adds a charity by wallet with a metadata hash.
+     * @dev If called by an admin, registers the provided wallet. If called by the wallet itself,
+     *      also allowed. Name is not provided in this minimal interface; stored as empty string.
      */
-    function getProfile(uint256 orgId) 
-        external 
-        view 
-        charityExists(orgId) 
-        returns (CharityProfile memory profile) 
-    {
-        return profiles[orgId];
+    function registerCharity(address wallet, string calldata metadataHash) external whenNotPaused whenSystemNotPaused returns (uint256 orgId) {
+        require(wallet != address(0), "Invalid wallet");
+        require(bytes(metadataHash).length > 0, "MetaCID cannot be empty");
+        require(addressToOrgId[wallet] == 0, "Address already registered");
+        require(
+            governance.hasRole(governance.DEFAULT_ADMIN_ROLE(), msg.sender) || msg.sender == wallet,
+            "Not authorized"
+        );
+
+        orgId = nextOrgId++;
+        profiles[orgId] = CharityProfile({
+            name: "",
+            metaCID: metadataHash,
+            approved: false,
+            treasury: address(0),
+            registrationTime: block.timestamp,
+            registrant: wallet
+        });
+        addressToOrgId[wallet] = orgId;
+        totalRegistered++;
+        emit CharityRegistered(orgId, "", wallet);
     }
-    
+
     /**
-     * @dev Get total statistics
-     * @return registeredCount Total registered charities
-     * @return approvedCount Total approved charities
+     * @notice Marks the charity as verified (approved) by wallet.
      */
-    function getStats() external view returns (uint256 registeredCount, uint256 approvedCount) {
-        return (totalRegistered, totalApproved);
+    function verifyCharity(address wallet) external onlyAdmin whenNotPaused whenSystemNotPaused {
+        require(wallet != address(0), "Invalid wallet");
+        uint256 orgId = addressToOrgId[wallet];
+        require(orgId != 0, "Not registered");
+        if (!profiles[orgId].approved) {
+            profiles[orgId].approved = true;
+            approved[orgId] = true;
+            totalApproved++;
+            emit CharityApproved(orgId, true);
+        }
+    }
+
+    /**
+     * @notice Retrieves the charity profile by wallet.
+     */
+    function getCharity(address wallet) external view returns (CharityProfile memory) {
+        uint256 orgId = addressToOrgId[wallet];
+        require(orgId != 0, "Not registered");
+        return profiles[orgId];
     }
 }
