@@ -17,6 +17,8 @@ describe("Oracle", function () {
       charityOwner,
       beneficiary,
       donor1,
+      donor2,
+      donor3,
       attestor1,
       other,
     ] = await ethers.getSigners();
@@ -454,7 +456,7 @@ return {
       return fixture;
     }
 
-    it("4a) disburseIfVerified: SUCCESS path", async () => {
+it("4a) disburseIfVerified: SUCCESS path", async () => {
       const fixture = await loadFixture(fixtureWithModules);
       const {
         oracleContract,
@@ -463,10 +465,57 @@ return {
         escrowVault,
         beneficiary,
         runFullDonorVote,
+        advanceTime,
+        charityOwner, // <-- Make sure charityOwner is loaded
       } = fixture;
 
       // 1. Run donor vote to PASS (true)
       await runFullDonorVote(true);
+
+      // 2. --- FIX: Advance CharityEvent to VERIFICATION phase ---
+      await charityEvent.connect(charityOwner).closeFunding(); // Phase: FUNDING -> CLOSED
+      await charityEvent.connect(charityOwner).submitEvidence("ipfs://cid"); // Phase: CLOSED -> VERIFICATION
+
+      // 3. Advance AttestorVoting to Finalized (since it wasn't used)
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Commit
+      await advanceTime(101);
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Reveal
+      await advanceTime(101);
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Finalized
+
+      // 4. Call settleAttestors
+      await oracleContract.connect(oracle).settleAttestors(eventId);
+
+      // 5. Call disburse
+      // This will now call setVerified() on the CharityEvent, which is in the correct VERIFICATION phase
+      await expect(
+        oracleContract.connect(oracle).disburseIfVerified(eventId)
+      )
+        .to.emit(oracleContract, "Disbursed")
+        .withArgs(eventId, beneficiary.address);
+
+      // 6. Check effects
+      expect(await charityEvent.verified()).to.be.true;
+      expect(await charityEvent.phase()).to.equal(3); // 3 = EventPhase.APPROVED
+      expect(await escrowVault.released(eventId)).to.be.true;
+      expect(await escrowVault.releaseRecipient(eventId)).to.equal(
+        beneficiary.address
+      );
+    });
+    
+    it("4b) disburseIfVerified: FAIL path (reverts)", async () => {
+      const fixture = await loadFixture(fixtureWithModules);
+      const {
+        oracleContract,
+        oracle,
+        charityEvent,
+        escrowVault,
+        runFullDonorVote,
+        advanceTime,
+      } = fixture;
+
+      // 1. Run donor vote to FAIL (false)
+      await runFullDonorVote(false);
 
       // 2. Advance AttestorVoting to Finalized (since it wasn't used)
       await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Commit
@@ -478,43 +527,12 @@ return {
       // 3. Call settleAttestors
       await oracleContract.connect(oracle).settleAttestors(eventId);
 
-      // 4. Call disburse
-      await expect(
-        oracleContract.connect(oracle).disburseIfVerified(eventId)
-      )
-        .to.emit(oracleContract, "Disbursed")
-        .withArgs(eventId, beneficiary.address);
-
-      // 5. Check effects
-      expect(await charityEvent.verified()).to.be.true;
-      expect(await escrowVault.released(eventId)).to.be.true;
-      expect(await escrowVault.releaseRecipient(eventId)).to.equal(
-        beneficiary.address
-      );
-    });
-
-    it("4b) disburseIfVerified: FAIL path (reverts)", async () => {
-      const fixture = await loadFixture(fixtureWithModules);
-      const {
-        oracleContract,
-        oracle,
-        charityEvent,
-        escrowVault,
-        runFullDonorVote,
-      } = fixture;
-
-      // 1. Run donor vote to FAIL (false)
-      await runFullDonorVote(false);
-
-      // 2. Call settleAttestors
-      await oracleContract.connect(oracle).settleAttestors(eventId);
-
-      // 3. Call disburse - should REVERT
+      // 4. Call disburse - should REVERT
       await expect(
         oracleContract.connect(oracle).disburseIfVerified(eventId)
       ).to.be.revertedWith("OracleAstraea: not verified");
 
-      // 4. Check effects
+      // 5. Check effects
       expect(await charityEvent.verified()).to.be.false;
       expect(await escrowVault.released(eventId)).to.be.false;
     });
