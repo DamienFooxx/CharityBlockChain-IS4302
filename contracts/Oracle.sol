@@ -193,12 +193,6 @@ contract Oracle {
         AttestorVoting(modules[eventId].attestor).fundPools(addRT, addRF);
     }
 
-    function setAttestorEligibilityRoot(bytes32 eventId, bytes32 merkleRoot)
-        external onlyOracle eventExists(eventId)
-    {
-        AttestorVoting(modules[eventId].attestor).setEligibilityRoot(merkleRoot);
-    }
-
     function setAttestorChallengeWindow(bytes32 eventId, uint256 seconds_)
         external onlyOracle eventExists(eventId)
     {
