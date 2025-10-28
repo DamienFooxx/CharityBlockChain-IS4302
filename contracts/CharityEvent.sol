@@ -96,7 +96,7 @@ contract CharityEvent is Registry {
         address _beneficiary,
         uint256 _fundingGoal,
         uint256 _fundingDeadline,
-        string calldata _description
+        string memory _description
     ) Registry(_governance) {
         require(_eventId != bytes32(0), "Invalid event ID");
         require(_orgId > 0, "Invalid org ID");

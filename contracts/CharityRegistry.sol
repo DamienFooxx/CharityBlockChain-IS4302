@@ -140,15 +140,6 @@ contract CharityRegistry is Registry {
         emit CharityApproved(orgId, isApproved);
     }
     
-    /**
-     * @dev Check if a charity is approved
-     * @param orgId The organization ID
-     * @return Whether the charity is approved
-     */
-    function isApproved(uint256 orgId) external view returns (bool) {
-        return profiles[orgId].approved;
-    }
-    
     // --- Treasury Management ---
     
     /**
@@ -189,10 +180,10 @@ contract CharityRegistry is Registry {
     
     /**
      * @dev Get total statistics
-     * @return registered Total registered charities
-     * @return approved Total approved charities
+     * @return registeredCount Total registered charities
+     * @return approvedCount Total approved charities
      */
-    function getStats() external view returns (uint256 registered, uint256 approved) {
+    function getStats() external view returns (uint256 registeredCount, uint256 approvedCount) {
         return (totalRegistered, totalApproved);
     }
 }
