@@ -298,30 +298,4 @@ contract CharityTreasury {
         return eventBalances[orgId][eventId];
     }
     
-    /**
-     * @dev Get organization ID by address
-     * @param addr The address to look up
-     * @return orgId The organization ID (0 if not found)
-     */
-    function getOrgIdByAddress(address addr) external view returns (uint256 orgId) {
-        return addressToOrgId[addr];
-    }
-    
-    /**
-     * @dev Check if treasury is active
-     * @param orgId The organization ID
-     * @return isActive Whether the treasury is active
-     */
-    function isTreasuryActive(uint256 orgId) external view returns (bool isActive) {
-        return treasuries[orgId].active;
-    }
-    
-    /**
-     * @dev Get treasury owner
-     * @param orgId The organization ID
-     * @return owner The treasury owner address
-     */
-    function getTreasuryOwner(uint256 orgId) external view returns (address owner) {
-        return treasuries[orgId].owner;
-    }
 }
