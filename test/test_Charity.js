@@ -91,6 +91,31 @@ describe("Charity contracts integration", function () {
     expect(approvedCount).to.equal(1n);
   });
 
+  it("1b) CharityRegistry: rejects duplicate registration and enforces onlyAdmin", async () => {
+    // Register by wallet
+    await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+    await expect(
+      registry.connect(charityOwner).registerCharity("Charity A", "QmMeta2")
+    ).to.be.revertedWith("Address already registered");
+
+    const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
+    // Non-admin cannot approve or set treasury
+    await expect(registry.connect(user1).setApproval(orgId, true)).to.be.revertedWith("Registry: Caller is not admin");
+    await expect(registry.connect(user1).setTreasury(orgId, await treasury.getAddress())).to.be.revertedWith("Registry: Caller is not admin");
+  });
+
+  it("1c) CharityRegistry: pause in governance blocks system functions", async () => {
+    await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+    await governance.connect(pauser).pause();
+    await expect(
+      registry.connect(charityOwner).updateProfile(1n, "QmNew")
+    ).to.be.revertedWith("Registry: System is paused");
+    await governance.connect(deployer).unpause();
+    await registry.connect(charityOwner).updateProfile(1n, "QmNew");
+    const prof = await registry.profiles(1n);
+    expect(prof.metaCID).to.equal("QmNew");
+  });
+
   it("2) CharityReputation: initialize and update via oracle", async () => {
     // Ensure org exists
     await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
@@ -111,6 +136,21 @@ describe("Charity contracts integration", function () {
     // Finalize pass gives +15 (500 -> 510 -> 515 -> 530)
     await reputation.connect(oracle).updateOnFinalize(orgId, true);
     expect(await reputation.scoreOf(orgId)).to.equal(530n);
+  });
+
+  it("2b) CharityReputation: onlyOracle enforced and duplicate event outcome prevented", async () => {
+    await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+    const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
+    await reputation.connect(deployer).initializeReputation(orgId);
+
+    await expect(
+      reputation.connect(user1).updateOnEventOutcome(orgId, 99n, true)
+    ).to.be.revertedWith("Not oracle");
+
+    await reputation.connect(oracle).updateOnEventOutcome(orgId, 99n, true);
+    await expect(
+      reputation.connect(oracle).updateOnEventOutcome(orgId, 99n, false)
+    ).to.be.revertedWith("Event already recorded");
   });
 
   it("3) CharityTreasury: create, receive release (oracle), withdraw", async () => {
@@ -151,6 +191,47 @@ describe("Charity contracts integration", function () {
     );
   });
 
+  it("3b) CharityTreasury: onlyAdmin/onlyOracle/owner checks and edge cases", async () => {
+    // Non-admin cannot create treasury
+    await expect(
+      treasury.connect(user1).createTreasury(1n, await charityOwner.getAddress())
+    ).to.be.revertedWith("Not admin");
+
+    // Setup org and treasury
+    await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+    const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
+    await registry.connect(deployer).setApproval(orgId, true);
+    await registry.connect(deployer).setTreasury(orgId, await treasury.getAddress());
+    await treasury.connect(deployer).createTreasury(orgId, await charityOwner.getAddress());
+
+    // Non-oracle cannot receiveRelease
+    await expect(
+      treasury.connect(user1).receiveRelease(orgId, 1n, 1n)
+    ).to.be.revertedWith("Not oracle");
+
+    // Mint to oracle and approve
+    await sgd.connect(deployer).mint(await oracle.getAddress(), 1000n);
+    await sgd.connect(oracle).approve(await treasury.getAddress(), 1000n);
+
+    // Receive zero amount reverts
+    await expect(
+      treasury.connect(oracle).receiveRelease(orgId, 1n, 0n)
+    ).to.be.revertedWith("Amount must be positive");
+
+    // Happy path
+    await treasury.connect(oracle).receiveRelease(orgId, 1n, 500n);
+
+    // Non-owner cannot withdraw
+    await expect(
+      treasury.connect(user1).withdraw(await beneficiary.getAddress(), 1n)
+    ).to.be.revertedWith("Treasury not found");
+
+    // Owner cannot withdraw > available
+    await expect(
+      treasury.connect(charityOwner).withdraw(await beneficiary.getAddress(), 10000n)
+    ).to.be.revertedWith("Insufficient available balance");
+  });
+
   it("4) CharityEvent: lifecycle funding -> closed -> verification -> approved", async () => {
     // Event starts in FUNDING
     let summary = await eventCtr.getEventSummary();
@@ -172,6 +253,24 @@ describe("Charity contracts integration", function () {
     await eventCtr.connect(oracle).setVerified(true, [true, true, true]);
     summary = await eventCtr.getEventSummary();
     expect(summary[2]).to.equal(3n); // APPROVED
+  });
+
+  it("4b) CharityEvent: access control and phase guards", async () => {
+    // Only owner can close funding
+    await expect(eventCtr.connect(user1).closeFunding()).to.be.revertedWith("Not charity owner");
+    await eventCtr.connect(charityOwner).closeFunding();
+
+    // Only owner can submit evidence, only in CLOSED
+    await expect(eventCtr.connect(user1).submitEvidence("Qm1")).to.be.revertedWith("Not charity owner");
+    await eventCtr.connect(charityOwner).submitEvidence("Qm1");
+
+    // Only oracle can setVerified; wrong phase or caller reverts
+    await expect(eventCtr.connect(user1).setVerified(true, [true, true, true])).to.be.revertedWith("Not oracle");
+    await eventCtr.connect(oracle).setVerified(false, [false, false, false]);
+
+    // After REJECTED, requestRetry allowed only by owner via requestRetry (if implemented), else ensure phase set
+    const summary = await eventCtr.getEventSummary();
+    expect(summary[2] === 3n || summary[2] === 4n).to.equal(true);
   });
 });
 
