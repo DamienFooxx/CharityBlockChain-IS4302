@@ -122,13 +122,6 @@ contract CharityEvent is Registry {
     // --- Core Functions ---
     
     /**
-     * @dev Get the unique event identifier
-     */
-    function id() external view returns (bytes32) {
-        return eventId;
-    }
-    
-    /**
      * @dev Update total raised amount (called by pledge contract)
      */
     function updateRaised(uint256 amount) 
@@ -238,7 +231,7 @@ contract CharityEvent is Registry {
     function fundingDeadlinePassed() external view returns (bool) {
         return block.timestamp >= fundingDeadline;
     }
-
+    
     /**
      * @dev Get last per-stream verification results
      */
@@ -253,7 +246,7 @@ contract CharityEvent is Registry {
         external 
         view 
         returns (
-            bytes32 id,
+            bytes32 eventIdValue,
             uint256 organizationId,
             EventPhase currentPhase,
             uint256 goal,

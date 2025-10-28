@@ -230,7 +230,7 @@ contract CharityReputation {
      * @param orgId The organization ID
      * @return hasGoodReputation Whether the charity has good reputation
      */
-    function hasGoodReputation(uint256 orgId) external view returns (bool hasGoodReputation) {
+    function hasGoodReputation(uint256 orgId) external view returns (bool) {
         return reputationScores[orgId].score >= 600;
     }
     
