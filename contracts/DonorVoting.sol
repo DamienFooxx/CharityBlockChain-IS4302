@@ -266,36 +266,43 @@ contract DonorVoting {
      * Rules:
      * 1. Quorum: Participating vote weight must meet `globalQuorumBps`
      * of the total possible vote weight for that stream.
-     * 2. Majority: `pass` weight must be strictly greater than `fail` weight.
+     * 2. Majority: `pass` weight must be strictly greater than `fail` weight and above PassMajorityBps set
      *
      * A stream passes iff BOTH Quorum and Majority are met.
      */
-    function _finalize() internal {
-        uint256 quorumBps = governance.globalQuorumBps();
+function _finalize() internal {
+        uint256 quorumRequiredBps = governance.globalQuorumBps(); // Fetch quorum threshold
+        uint256 passMajorityRequiredBps = governance.globalPassMajorityBps(); // <-- Fetch NEW pass threshold
         bool _overallPassed = true;
 
         for (uint8 s = 0; s < NUM_STREAMS; s++) {
             Tally storage tally = tallies[s];
-            bool passed = false;
+            bool streamPasses = false; // Default to false
             uint256 streamTotalPossible = totalPossibleWeight[s];
 
-            if (streamTotalPossible > 0) {
-                // Check Quorum: Is participation % >= globalQuorumBps?
-                // Note: globalQuorumBps is 10000-based (e.g., 7000 = 70%)
+            // Only proceed if voters were assigned and actually voted
+            if (streamTotalPossible > 0 && tally.totalWeight > 0) {
+                // --- Check 1: Quorum ---
+                // Is participation weight % >= quorumRequiredBps?
                 uint256 participationBps = (tally.totalWeight * 10000) / streamTotalPossible;
+                bool quorumMet = participationBps >= quorumRequiredBps;
 
-                if (participationBps >= quorumBps) {
-                    // Check Majority: Is pass > fail?
-                    if (tally.pass > tally.fail) {
-                        passed = true;
+                if (quorumMet) {
+                    // --- Check 2: Pass Majority Threshold ---
+                    // Is pass weight % of *participating* weight >= passMajorityRequiredBps?
+                    uint256 passPercentageBps = (tally.pass * 10000) / tally.totalWeight;
+                    bool passThresholdMet = passPercentageBps >= passMajorityRequiredBps; // <-- USES NEW VARIABLE
+
+                    if (passThresholdMet) {
+                        streamPasses = true; // Only passes if BOTH checks are true
                     }
                 }
             }
-            // If streamTotalPossible is 0 (no one assigned), passed remains false.
+            // If streamTotalPossible is 0, or tally.totalWeight is 0, streamPasses remains false.
 
-            streamPassed[s] = passed;
-            if (!passed) {
-                _overallPassed = false;
+            streamPassed[s] = streamPasses;
+            if (!streamPasses) {
+                _overallPassed = false; // If any stream fails, the overall result is false
             }
         }
 

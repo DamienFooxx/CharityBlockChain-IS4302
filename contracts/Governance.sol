@@ -24,8 +24,8 @@ contract Governance is AccessControl, Pausable {
 
     // --- System Parameters ---
     // Stores system-wide variables.
-    // Example: The 70% (7000) quorum basis points for the VotingModule.
     uint256 public globalQuorumBps;
+    uint256 public globalPassMajorityBps;
 
     // --- Contract Registry ---
     // Stores the addresses of all other contracts in the system.
@@ -34,10 +34,11 @@ contract Governance is AccessControl, Pausable {
 
     // --- Events ---
     event QuorumUpdated(uint256 newQuorumBps);
+    event PassMajorityUpdated(uint256 newPassMajorityBps);
     event ContractAddressUpdated(bytes32 indexed name, address newAddress);
 
     // --- Constructor ---
-    constructor(address initialOracle, address initialPauser, uint256 initialQuorumBps) {
+    constructor(address initialOracle, address initialPauser, uint256 initialQuorumBps, uint256 initialPassMajorityBps) {
         // Grant the deployer the DEFAULT_ADMIN_ROLE.
         // This role can grant/revoke all other roles.
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -48,8 +49,14 @@ contract Governance is AccessControl, Pausable {
         _grantRole(PAUSER_ROLE, msg.sender); // Deployer can also pause
         
         // Set initial parameters
+        require(initialQuorumBps <= 10000, "Quorum Bps > 100%"); // Added check here
+        require(initialPassMajorityBps <= 10000, "Majority Bps > 100%"); // <-- ADDED check
+
         globalQuorumBps = initialQuorumBps;
+        globalPassMajorityBps = initialPassMajorityBps; // <-- ADDED
+
         emit QuorumUpdated(initialQuorumBps);
+        emit PassMajorityUpdated(initialPassMajorityBps); // <-- ADDED
     }
 
     // --- Role-Protected Functions (Parameter Management) ---
@@ -65,6 +72,20 @@ contract Governance is AccessControl, Pausable {
         require(_newQuorumBps <= 10000, "Bps > 100%");
         globalQuorumBps = _newQuorumBps;
         emit QuorumUpdated(_newQuorumBps);
+    }
+
+    /**
+     * @dev Updates the global pass majority required for voting modules.
+     * @param _newPassMajorityBps The new pass majority in basis points (e.g., 7000 for 70%).
+     */
+    function setGlobalPassMajority(uint256 _newPassMajorityBps)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenNotPaused
+    {
+        require(_newPassMajorityBps <= 10000, "Bps > 100%");
+        globalPassMajorityBps = _newPassMajorityBps;
+        emit PassMajorityUpdated(_newPassMajorityBps);
     }
 
     // --- Role-Protected Functions (Contract Registry) ---
