@@ -74,10 +74,15 @@ contract Oracle {
      */
     function setModules(bytes32 eventId, address donor, address attestor, address charity)
         external
-        onlyOracle
-    {
+        onlyOracle {
         require(eventId != bytes32(0), "OracleAstraea: empty eventId");
         require(donor != address(0) && attestor != address(0), "OracleAstraea: zero module");
+        
+        require(donorRounds[eventId].length == 0, "OracleAstraea: already set");
+        donorRounds[eventId].push(donor);
+        attestorRounds[eventId].push(attestor);
+        currentRound[eventId] = 0;
+
         modules[eventId] = Modules({donor: donor, attestor: attestor, charity: charity});
         emit ModulesSet(eventId, donor, attestor, charity);
     }
@@ -191,12 +196,6 @@ contract Oracle {
         external onlyOracle eventExists(eventId)
     {
         AttestorVoting(modules[eventId].attestor).fundPools(addRT, addRF);
-    }
-
-    function setAttestorEligibilityRoot(bytes32 eventId, bytes32 merkleRoot)
-        external onlyOracle eventExists(eventId)
-    {
-        AttestorVoting(modules[eventId].attestor).setEligibilityRoot(merkleRoot);
     }
 
     function setAttestorChallengeWindow(bytes32 eventId, uint256 seconds_)

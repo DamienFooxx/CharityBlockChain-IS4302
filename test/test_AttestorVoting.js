@@ -2,7 +2,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
-const { MerkleTree } = require("merkletreejs"); // Fixed import
 
 describe("AttestorVoting", function () {
   const RAY = 10n ** 27n;
@@ -51,6 +50,10 @@ describe("AttestorVoting", function () {
     const donorRanking = await DonorRanking.deploy(governance.target);
     await donorRanking.waitForDeployment();
 
+    const AttestorRegistry = await ethers.getContractFactory("AttestorRegistry");
+    const attestorRegistry = await AttestorRegistry.deploy(governance.target);
+    await attestorRegistry.waitForDeployment();
+
     // --- Deploy Main Contracts ---
     const DonorVoting = await ethers.getContractFactory("DonorVoting");
     const donorVoting = await DonorVoting.deploy(
@@ -65,27 +68,10 @@ describe("AttestorVoting", function () {
     const AttestorVoting = await ethers.getContractFactory("AttestorVoting");
     const attestorVoting = await AttestorVoting.deploy(
       governance.target,
-      sgdCoin.target
+      sgdCoin.target,
+      attestorRegistry.target
     );
     await attestorVoting.waitForDeployment();
-
-    // --- Setup Attestor Merkle Tree ---
-    const attestors = [attestor1, attestor2];
-    const leaves = attestors.map((a) =>
-      ethers.solidityPackedKeccak256(["address"], [a.address])
-    );
-    const tree = new MerkleTree(leaves, ethers.keccak256, {
-      sortPairs: true,
-    });
-    const eligibilityRoot = tree.getHexRoot();
-    const proofs = {
-      [attestor1.address]: tree.getHexProof(leaves[0]),
-      [attestor2.address]: tree.getHexProof(leaves[1]),
-    };
-    // Proof for an ineligible address
-    const otherLeaf = ethers.solidityPackedKeccak256(["address"], [other.address]);
-    const invalidProof = tree.getHexProof(otherLeaf);
-
 
     // --- Fund Attestors, Donors, and Contract ---
     await sgdCoin.connect(owner).mint(attestor1.address, 10000n);
@@ -95,6 +81,10 @@ describe("AttestorVoting", function () {
     await sgdCoin
       .connect(owner)
       .mint(attestorVoting.target, 1000000n); // Fund for rewards
+
+    // Register Attestors
+    await attestorRegistry.connect(owner).setAttestorRegistration(attestor1.address, true);
+    await attestorRegistry.connect(owner).setAttestorRegistration(attestor2.address, true);
 
     // --- Setup Donors (Register & Pledge) ---
     const donorPledgesList = [
@@ -124,6 +114,7 @@ describe("AttestorVoting", function () {
     return {
       attestorVoting,
       donorVoting, // Return the real DonorVoting contract
+      attestorRegistry,
       governance,
       sgdCoin,
       donorPledges,
@@ -136,9 +127,6 @@ describe("AttestorVoting", function () {
       donor1,
       donor2,
       other,
-      eligibilityRoot,
-      proofs,
-      invalidProof, // Added this
       advanceTime,
       getDeadlines,
     };
@@ -195,9 +183,6 @@ describe("AttestorVoting", function () {
         attestorVoting.connect(other).fundPools(0, 0)
       ).to.be.revertedWith(revertMsg);
       await expect(
-        attestorVoting.connect(other).setEligibilityRoot(eligibilityRoot)
-      ).to.be.revertedWith(revertMsg);
-      await expect(
         attestorVoting.connect(other).recordAttestorAssignment(other.address, 0)
       ).to.be.revertedWith(revertMsg);
       await expect(
@@ -251,17 +236,7 @@ describe("AttestorVoting", function () {
       expect(await attestorVoting.RF()).to.equal(5050n);
     });
 
-    it("2g) setEligibilityRoot: should set Merkle root", async () => {
-      const { attestorVoting, oracle, eligibilityRoot } = await loadFixture(deployFullSystemFixture); // Corrected
-      await attestorVoting
-        .connect(oracle)
-        .setEligibilityRoot(eligibilityRoot);
-      expect(await attestorVoting.eligibilityRoot()).to.equal(
-        eligibilityRoot
-      );
-    });
-
-    it("2h) recordAttestorAssignment: should assign attestor to stream", async () => {
+    it("2g) recordAttestorAssignment: should assign attestor to stream", async () => {
       const { attestorVoting, oracle, attestor1 } = await loadFixture(deployFullSystemFixture); // Corrected
       await attestorVoting
         .connect(oracle)
@@ -270,7 +245,7 @@ describe("AttestorVoting", function () {
       expect(await attestorVoting.assignedStream(attestor1.address)).to.equal(1);
     });
 
-    it("2i) recordAttestorAssignment: reverts if already assigned", async () => {
+    it("2h) recordAttestorAssignment: reverts if already assigned", async () => {
       const { attestorVoting, oracle, attestor1 } = await loadFixture(deployFullSystemFixture); // Corrected
       await attestorVoting
         .connect(oracle)
@@ -282,7 +257,7 @@ describe("AttestorVoting", function () {
       ).to.be.revertedWith("AV: Already assigned");
     });
 
-    it("2j) recordAttestorAssignment: reverts for invalid stream", async () => {
+    it("2i) recordAttestorAssignment: reverts for invalid stream", async () => {
       const { attestorVoting, oracle, attestor1 } = await loadFixture(deployFullSystemFixture); // Corrected
       await expect(
         attestorVoting
@@ -409,13 +384,11 @@ describe("AttestorVoting", function () {
         oracle,
         attestor1,
         sgdCoin,
-        eligibilityRoot,
         getDeadlines,
       } = fixture;
 
       // 1. Set params
       await attestorVoting.connect(oracle).setSigmaBounds(100n, 1000n);
-      await attestorVoting.connect(oracle).setEligibilityRoot(eligibilityRoot);
       const { commitTime, revealTime } = await getDeadlines();
       await attestorVoting
         .connect(oracle)
@@ -433,8 +406,7 @@ describe("AttestorVoting", function () {
     });
 
     it("4a) commit: allows valid commit", async () => {
-      const { attestorVoting, attestor1, sgdCoin, proofs } = fixture;
-      const proof = proofs[attestor1.address];
+      const { attestorVoting, attestor1, sgdCoin } = fixture;
 
       const balanceBefore = await sgdCoin.balanceOf(attestor1.address);
       const contractBalanceBefore = await sgdCoin.balanceOf(attestorVoting.target);
@@ -442,7 +414,7 @@ describe("AttestorVoting", function () {
       await expect(
         attestorVoting
           .connect(attestor1)
-          .commit(commitment, stakeAmount, proof)
+          .commit(commitment, stakeAmount)
       )
         .to.emit(attestorVoting, "Committed")
         .withArgs(attestor1.address, 0, stakeAmount, commitment);
@@ -462,67 +434,75 @@ describe("AttestorVoting", function () {
     });
 
     it("4b) commit: reverts if not in Commit phase", async () => {
-      const { attestorVoting, attestor1, oracle, proofs, advanceTime } = fixture;
+      const { attestorVoting, attestor1, oracle, advanceTime } = fixture;
       await advanceTime(101);
       await attestorVoting.connect(oracle).advancePhase(); // -> Reveal
       await expect(
         attestorVoting
           .connect(attestor1)
-          .commit(commitment, stakeAmount, proofs[attestor1.address])
+          .commit(commitment, stakeAmount)
       ).to.be.revertedWith("AV: Invalid phase");
     });
 
     it("4c) commit: reverts if not assigned", async () => {
-      const { attestorVoting, other, proofs, attestor1 } = fixture; // <<< Added attestor1 here
-       // Attestor1 is assigned, use its proof with 'other' signer
+      const { attestorVoting, other } = fixture;
       await expect(
         attestorVoting
           .connect(other)
-          .commit(commitment, stakeAmount, proofs[attestor1.address]) // Now attestor1 is defined
+          .commit(commitment, stakeAmount) // Now attestor1 is defined
       ).to.be.revertedWith("AV: Not assigned");
     });
 
     it("4d) commit: reverts if already committed", async () => {
-      const { attestorVoting, attestor1, proofs } = fixture;
+      const { attestorVoting, attestor1 } = fixture;
       await attestorVoting
         .connect(attestor1)
-        .commit(commitment, stakeAmount, proofs[attestor1.address]);
+        .commit(commitment, stakeAmount);
       await expect(
         attestorVoting
           .connect(attestor1)
-          .commit(commitment, stakeAmount, proofs[attestor1.address])
+          .commit(commitment, stakeAmount)
       ).to.be.revertedWith("AV: Already committed");
     });
 
     it("4e) commit: reverts if stake < min", async () => {
-      const { attestorVoting, attestor1, proofs } = fixture;
+      const { attestorVoting, attestor1 } = fixture;
       await expect(
         attestorVoting
           .connect(attestor1)
-          .commit(commitment, 99n, proofs[attestor1.address])
+          .commit(commitment, 99n)
       ).to.be.revertedWith("AV: Stake < min");
     });
 
     it("4f) commit: reverts if stake > max", async () => {
-      const { attestorVoting, attestor1, proofs } = fixture;
+      const { attestorVoting, attestor1 } = fixture;
       await expect(
         attestorVoting
           .connect(attestor1)
-          .commit(commitment, 1001n, proofs[attestor1.address])
+          .commit(commitment, 1001n)
       ).to.be.revertedWith("AV: Stake > max");
     });
 
-    it("4g) commit: reverts if ineligible (bad proof)", async () => {
-      const { attestorVoting, attestor1, invalidProof } = fixture;
-      await expect(
-        attestorVoting
-          .connect(attestor1)
-          .commit(commitment, stakeAmount, invalidProof)
-      ).to.be.revertedWith("AV: Not eligible");
+    it("4g) commit: reverts if ineligible (not registered)", async () => {
+        const { attestorVoting, oracle, other, sgdCoin } = fixture; // 'other' is not in registry
+
+        // 1. Assign 'other' so they pass the first check
+        await attestorVoting.connect(oracle).recordAttestorAssignment(other.address, 0);
+
+        // 2. Fund and approve
+        await sgdCoin.connect(fixture.owner).mint(other.address, stakeAmount);
+        await sgdCoin.connect(other).approve(attestorVoting.target, stakeAmount);
+
+        // 3. Commit should fail on the "Not eligible" check
+        await expect(
+            attestorVoting
+            .connect(other)
+            .commit(commitment, stakeAmount)
+        ).to.be.revertedWith("AV: Not eligible");
     });
 
     it("4h) commit: reverts if transferFrom fails (no allowance)", async () => {
-      const { attestorVoting, attestor2, oracle, sgdCoin, proofs } =
+      const { attestorVoting, attestor2, oracle, sgdCoin } =
         fixture;
       // Setup attestor2 (but forget approval)
       await attestorVoting
@@ -535,7 +515,7 @@ describe("AttestorVoting", function () {
       await expect(
         attestorVoting
           .connect(attestor2)
-          .commit(commitment, stakeAmount, proofs[attestor2.address])
+          .commit(commitment, stakeAmount)
       ).to.be.reverted; // Reverted without reason string = ERC20 insufficient allowance
     });
   });
@@ -561,15 +541,12 @@ describe("AttestorVoting", function () {
         oracle,
         attestor1,
         sgdCoin,
-        eligibilityRoot,
-        proofs,
         getDeadlines,
         advanceTime,
       } = fixture;
 
       // 1. Set params
       await attestorVoting.connect(oracle).setSigmaBounds(100n, 1000n);
-      await attestorVoting.connect(oracle).setEligibilityRoot(eligibilityRoot);
       const { commitTime, revealTime } = await getDeadlines();
       await attestorVoting
         .connect(oracle)
@@ -586,7 +563,7 @@ describe("AttestorVoting", function () {
         .approve(attestorVoting.target, stakeAmount);
       await attestorVoting
         .connect(attestor1)
-        .commit(commitment, stakeAmount, proofs[attestor1.address]);
+        .commit(commitment, stakeAmount);
       // 5. Advance to Reveal
       await advanceTime(101);
       await attestorVoting.connect(oracle).advancePhase();
@@ -718,15 +695,12 @@ describe("AttestorVoting", function () {
         attestor1,
         attestor2,
         sgdCoin,
-        eligibilityRoot,
-        proofs,
         getDeadlines,
         advanceTime,
       } = fixture;
 
       // 1. Set AttestorVoting params
       await attestorVoting.connect(oracle).setSigmaBounds(100n, 5000n);
-      await attestorVoting.connect(oracle).setEligibilityRoot(eligibilityRoot);
       const { commitTime, revealTime } = await getDeadlines();
       await attestorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
       await attestorVoting.connect(oracle).fundPools(poolRT, poolRF);
@@ -743,8 +717,8 @@ describe("AttestorVoting", function () {
       // 4. Attestors approve and commit
       await sgdCoin.connect(attestor1).approve(attestorVoting.target, stake1);
       await sgdCoin.connect(attestor2).approve(attestorVoting.target, stake2);
-      await attestorVoting.connect(attestor1).commit(att1Commit, stake1, proofs[attestor1.address]);
-      await attestorVoting.connect(attestor2).commit(att2Commit, stake2, proofs[attestor2.address]);
+      await attestorVoting.connect(attestor1).commit(att1Commit, stake1);
+      await attestorVoting.connect(attestor2).commit(att2Commit, stake2);
 
       // 5. Advance AttestorVoting to Reveal
       await advanceTime(101);

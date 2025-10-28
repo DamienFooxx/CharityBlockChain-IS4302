@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "./AttestorRegistry.sol";
 import "./Governance.sol";
 import "./SGDCoin.sol";
 import "./DonorVoting.sol";
@@ -38,7 +38,7 @@ contract AttestorVoting {
     uint256 public sigmaMin; // Minimum stake
     uint256 public sigmaMax; // Maximum stake (0 = no cap)
     uint256 public tau; // Reward pool divisor (Pool / tau)
-    bytes32 public eligibilityRoot; // Merkle root of eligible attestors
+    AttestorRegistry public immutable attestorRegistry;
 
     // Reward Pools (Internal Accounting)
     uint256 public RT; // Reward Pool for "True" (Pass) outcomes
@@ -79,7 +79,6 @@ contract AttestorVoting {
     event SigmaBoundsUpdated(uint256 minSigma, uint256 maxSigma);
     event TauUpdated(uint256 oldTau, uint256 newTau);
     event PoolsFunded(uint256 newRT, uint256 newRF);
-    event EligibilityRootSet(bytes32 root);
     event AttestorAssigned(address indexed attestor, uint8 stream);
     event DeadlinesAdjusted(uint256 commitDeadline, uint256 revealDeadline);
     event PhaseAdvanced(Phase newPhase);
@@ -107,10 +106,18 @@ contract AttestorVoting {
      * @param _governance Address of the main Governance contract.
      * @param _stakeToken Address of the ERC20 token to be used for staking.
      */
-    constructor(address _governance, address _stakeToken) {
-        require(_governance != address(0) && _stakeToken != address(0), "AV: Zero address dependency");
+    constructor(
+        address _governance,
+        address _stakeToken,
+        address _attestorRegistry // <-- ADDED
+    ) {
+        require(_governance != address(0), "AV: Zero governance");
+        require(_stakeToken != address(0), "AV: Zero stake token");
+        require(_attestorRegistry != address(0), "AV: Zero registry"); // <-- ADDED
+
         governance = Governance(_governance);
         stakeToken = SGDCoin(_stakeToken);
+        attestorRegistry = AttestorRegistry(_attestorRegistry); // <-- ADDED
         phase = Phase.Pending;
         tau = 1; // Default to 1 to avoid division by zero
     }
@@ -169,15 +176,6 @@ contract AttestorVoting {
         RT += _addRT;
         RF += _addRF;
         emit PoolsFunded(RT, RF);
-    }
-
-    /**
-     * @notice (Oracle) Defines the Merkle root of eligible attestors.
-     * @dev See interface documentation.
-     */
-    function setEligibilityRoot(bytes32 _root) external onlyOracle {
-        eligibilityRoot = _root;
-        emit EligibilityRootSet(_root);
     }
 
     /**
@@ -301,12 +299,10 @@ contract AttestorVoting {
      * @notice (Attestor) Commit a vote with stake and eligibility proof.
      * @param _commitment keccak256(abi.encodePacked(bool choice, uint256 salt))
      * @param _stake The amount of `stakeToken` to stake.
-     * @param _merkleProof Proof of eligibility from the `eligibilityRoot`.
      */
     function commit(
         bytes32 _commitment,
-        uint256 _stake,
-        bytes32[] calldata _merkleProof
+        uint256 _stake
     ) external inPhase(Phase.Commit) {
         require(isAssigned[msg.sender], "AV: Not assigned");
         require(stakes[msg.sender] == 0, "AV: Already committed");
@@ -318,9 +314,8 @@ contract AttestorVoting {
             require(_stake <= sigmaMax, "AV: Stake > max");
         }
 
-        // 2. Check Merkle Proof of Eligibility
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender));
-        require(MerkleProof.verify(_merkleProof, eligibilityRoot, leaf), "AV: Not eligible");
+        // 2. Check Registry for Eligibility
+        require(attestorRegistry.isRegistered(msg.sender), "AV: Not eligible"); // <-- REPLACED LOGIC
 
         // 3. Store commitment
         stakes[msg.sender] = _stake;
