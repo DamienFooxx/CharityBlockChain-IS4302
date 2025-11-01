@@ -79,7 +79,7 @@ describe("Charity contracts integration", function () {
 
     // Helper to register charity (disambiguates function overload)
     const registerCharity = async (signer, name, metaCID) => {
-      return await registry.connect(signer).getFunction("registerCharity", ["string", "string"])(name, metaCID);
+      return await registry.connect(signer)["registerCharity(string,string)"](name, metaCID);
     };
 
     return {
