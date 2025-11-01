@@ -82,25 +82,25 @@ describe("Charity contracts integration", function () {
       return await registry.connect(signer)["registerCharity(string,string)"](name, metaCID);
     };
 
-    // Helper functions for view methods (ensure proper interface loading)
+    // Helper functions for view methods (use bracket notation like registerCharity)
     const getStats = async () => {
-      return await registry.getFunction("getStats")();
+      return await registry["getStats()"]();
     };
     
     const getProfile = async (orgId) => {
-      return await registry.getFunction("getProfile")(orgId);
+      return await registry["getProfile(uint256)"](orgId);
     };
     
     const getTreasuryBalance = async (orgId) => {
-      return await treasury.getFunction("balanceOf")(orgId);
+      return await treasury["balanceOf(uint256)"](orgId);
     };
     
     const getEventGoalReached = async (eventCtr) => {
-      return await eventCtr.getFunction("goalReached")();
+      return await eventCtr["goalReached()"]();
     };
     
     const getEventDeadlinePassed = async (eventCtr) => {
-      return await eventCtr.getFunction("fundingDeadlinePassed")();
+      return await eventCtr["fundingDeadlinePassed()"]();
     };
 
     return {
