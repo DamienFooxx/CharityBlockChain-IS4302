@@ -82,9 +82,9 @@ describe("Charity contracts integration", function () {
       return await registry.connect(signer)["registerCharity(string,string)"](name, metaCID);
     };
 
-    // Helper functions for view methods (use bracket notation like registerCharity)
+    // Helper functions for view methods (use bracket notation - no parentheses for no-param functions)
     const getStats = async () => {
-      return await registry["getStats()"]();
+      return await registry["getStats"]();
     };
     
     const getProfile = async (orgId) => {
@@ -96,11 +96,11 @@ describe("Charity contracts integration", function () {
     };
     
     const getEventGoalReached = async (eventCtr) => {
-      return await eventCtr["goalReached()"]();
+      return await eventCtr["goalReached"]();
     };
     
     const getEventDeadlinePassed = async (eventCtr) => {
-      return await eventCtr["fundingDeadlinePassed()"]();
+      return await eventCtr["fundingDeadlinePassed"]();
     };
 
     return {
