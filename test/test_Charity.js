@@ -82,6 +82,27 @@ describe("Charity contracts integration", function () {
       return await registry.connect(signer)["registerCharity(string,string)"](name, metaCID);
     };
 
+    // Helper functions for view methods (ensure proper interface loading)
+    const getStats = async () => {
+      return await registry.getFunction("getStats")();
+    };
+    
+    const getProfile = async (orgId) => {
+      return await registry.getFunction("getProfile")(orgId);
+    };
+    
+    const getTreasuryBalance = async (orgId) => {
+      return await treasury.getFunction("balanceOf")(orgId);
+    };
+    
+    const getEventGoalReached = async (eventCtr) => {
+      return await eventCtr.getFunction("goalReached")();
+    };
+    
+    const getEventDeadlinePassed = async (eventCtr) => {
+      return await eventCtr.getFunction("fundingDeadlinePassed")();
+    };
+
     return {
       governance,
       sgd,
@@ -99,6 +120,11 @@ describe("Charity contracts integration", function () {
       advanceTime,
       createEvent,
       registerCharity,
+      getStats,
+      getProfile,
+      getTreasuryBalance,
+      getEventGoalReached,
+      getEventDeadlinePassed,
     };
   }
 
@@ -148,7 +174,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("1d) should allow multiple charities with different owners", async () => {
-      const { registry, charityOwner, charityOwner2, registerCharity } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, charityOwner2, registerCharity, getStats } = await loadFixture(deployCharityFixture);
       
       await registerCharity(charityOwner,"Charity A", "QmMeta1");
       await registerCharity(charityOwner2,"Charity B", "QmMeta2");
@@ -159,7 +185,7 @@ describe("Charity contracts integration", function () {
       expect(orgId1).to.equal(1n);
       expect(orgId2).to.equal(2n);
       
-      const [registered] = await registry.getStats();
+      const [registered] = await getStats();
       expect(registered).to.equal(2n);
     });
 
@@ -179,22 +205,22 @@ describe("Charity contracts integration", function () {
     });
 
     it("1f) should update approval counts correctly", async () => {
-      const { registry, charityOwner, charityOwner2, deployer , registerCharity } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, charityOwner2, deployer, registerCharity, getStats } = await loadFixture(deployCharityFixture);
       
       await registerCharity(charityOwner,"Charity A", "QmMeta1");
       await registerCharity(charityOwner2,"Charity B", "QmMeta2");
       
-      let [, approvedCount] = await registry.getStats();
+      let [, approvedCount] = await getStats();
       expect(approvedCount).to.equal(0n);
       
       const orgId1 = await registry.addressToOrgId(await charityOwner.getAddress());
       await registry.connect(deployer).setApproval(orgId1, true);
       
-      [, approvedCount] = await registry.getStats();
+      [, approvedCount] = await getStats();
       expect(approvedCount).to.equal(1n);
       
       await registry.connect(deployer).setApproval(orgId1, false);
-      [, approvedCount] = await registry.getStats();
+      [, approvedCount] = await getStats();
       expect(approvedCount).to.equal(0n);
     });
 
@@ -282,7 +308,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("1k) should reject operations on non-existent charity", async () => {
-      const { registry, treasury, deployer , registerCharity } = await loadFixture(deployCharityFixture);
+      const { registry, treasury, deployer, getProfile } = await loadFixture(deployCharityFixture);
       
       await expect(
         registry.connect(deployer).setApproval(999n, true)
@@ -293,7 +319,7 @@ describe("Charity contracts integration", function () {
       ).to.be.revertedWith("Charity not found");
       
       await expect(
-        registry.getProfile(999n)
+        getProfile(999n)
       ).to.be.revertedWith("Charity not found");
     });
   });
@@ -557,7 +583,7 @@ describe("Charity contracts integration", function () {
   describe("3. CharityTreasury", function () {
     async function setupTreasuryFixture() {
       const fixture = await loadFixture(deployCharityFixture);
-      const { registry, treasury, charityOwner, deployer, registerCharity } = fixture;
+      const { registry, treasury, charityOwner, deployer, registerCharity, getTreasuryBalance } = fixture;
       
       await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
@@ -565,7 +591,7 @@ describe("Charity contracts integration", function () {
       await registry.connect(deployer).setTreasury(orgId, await treasury.getAddress());
       await treasury.connect(deployer).createTreasury(orgId, await charityOwner.getAddress());
       
-      return { ...fixture, orgId };
+      return { ...fixture, orgId, getTreasuryBalance };
     }
 
     it("3a) should create treasury with correct initial state", async () => {
@@ -613,7 +639,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("3d) should receive release from oracle and update balances", async () => {
-      const { treasury, sgd, oracle, deployer, orgId } = await loadFixture(setupTreasuryFixture);
+      const { treasury, sgd, oracle, deployer, orgId, getTreasuryBalance } = await loadFixture(setupTreasuryFixture);
       
       await sgd.connect(deployer).mint(await oracle.getAddress(), ethers.parseEther("100"));
       await sgd.connect(oracle).approve(await treasury.getAddress(), ethers.parseEther("100"));
@@ -624,7 +650,7 @@ describe("Charity contracts integration", function () {
         .to.emit(treasury, "FundsReceived")
         .withArgs(orgId, ethers.parseEther("100"), 1n);
       
-      const [total, available, locked] = await treasury.balanceOf(orgId);
+      const [total, available, locked] = await getTreasuryBalance(orgId);
       expect(total).to.equal(ethers.parseEther("100"));
       expect(available).to.equal(ethers.parseEther("100"));
       expect(locked).to.equal(0n);
@@ -669,7 +695,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("3h) should allow owner to withdraw funds", async () => {
-      const { treasury, sgd, oracle, deployer, charityOwner, beneficiary, orgId } = await loadFixture(setupTreasuryFixture);
+      const { treasury, sgd, oracle, deployer, charityOwner, beneficiary, orgId, getTreasuryBalance } = await loadFixture(setupTreasuryFixture);
       
       await sgd.connect(deployer).mint(await oracle.getAddress(), ethers.parseEther("100"));
       await sgd.connect(oracle).approve(await treasury.getAddress(), ethers.parseEther("100"));
@@ -681,7 +707,7 @@ describe("Charity contracts integration", function () {
         .to.emit(treasury, "FundsWithdrawn")
         .withArgs(orgId, await beneficiary.getAddress(), ethers.parseEther("30"));
       
-      const [total, available] = await treasury.balanceOf(orgId);
+      const [total, available] = await getTreasuryBalance(orgId);
       expect(total).to.equal(ethers.parseEther("70"));
       expect(available).to.equal(ethers.parseEther("70"));
       expect(await sgd.balanceOf(await beneficiary.getAddress())).to.equal(ethers.parseEther("30"));
@@ -720,7 +746,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("3k) should handle requestDisbursement correctly", async () => {
-      const { treasury, sgd, oracle, deployer, charityOwner, orgId } = await loadFixture(setupTreasuryFixture);
+      const { treasury, sgd, oracle, deployer, charityOwner, orgId, getTreasuryBalance } = await loadFixture(setupTreasuryFixture);
       
       await sgd.connect(deployer).mint(await oracle.getAddress(), ethers.parseEther("100"));
       await sgd.connect(oracle).approve(await treasury.getAddress(), ethers.parseEther("100"));
@@ -732,13 +758,13 @@ describe("Charity contracts integration", function () {
         .to.emit(treasury, "DisbursementRequested")
         .withArgs(orgId, 99n, ethers.parseEther("50"));
       
-      const [, available, locked] = await treasury.balanceOf(orgId);
+      const [, available, locked] = await getTreasuryBalance(orgId);
       expect(available).to.equal(ethers.parseEther("50"));
       expect(locked).to.equal(ethers.parseEther("50"));
     });
 
     it("3l) should handle releaseEventFunds correctly", async () => {
-      const { treasury, sgd, oracle, deployer, charityOwner, orgId } = await loadFixture(setupTreasuryFixture);
+      const { treasury, sgd, oracle, deployer, charityOwner, orgId, getTreasuryBalance } = await loadFixture(setupTreasuryFixture);
       
       await sgd.connect(deployer).mint(await oracle.getAddress(), ethers.parseEther("100"));
       await sgd.connect(oracle).approve(await treasury.getAddress(), ethers.parseEther("100"));
@@ -747,7 +773,7 @@ describe("Charity contracts integration", function () {
       
       await treasury.connect(oracle).releaseEventFunds(orgId, 1n, true);
       
-      const [, available, locked] = await treasury.balanceOf(orgId);
+      const [, available, locked] = await getTreasuryBalance(orgId);
       expect(available).to.equal(ethers.parseEther("100"));
       expect(locked).to.equal(0n);
     });
@@ -772,13 +798,13 @@ describe("Charity contracts integration", function () {
   describe("4. CharityEvent", function () {
     async function setupEventFixture() {
       const fixture = await loadFixture(deployCharityFixture);
-      const { registry, createEvent, charityOwner, registerCharity } = fixture;
+      const { registry, createEvent, charityOwner, registerCharity, getEventGoalReached, getEventDeadlinePassed } = fixture;
       
       await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       const eventCtr = await createEvent(charityOwner, orgId, ethers.parseEther("100"), 3600);
       
-      return { ...fixture, orgId, eventCtr };
+      return { ...fixture, orgId, eventCtr, getEventGoalReached, getEventDeadlinePassed };
     }
 
     it("4a) should deploy event with correct initial state", async () => {
@@ -1058,26 +1084,26 @@ describe("Charity contracts integration", function () {
     });
 
     it("4q) should check goal reached correctly", async () => {
-      const { eventCtr, deployer } = await loadFixture(setupEventFixture);
+      const { eventCtr, deployer, getEventGoalReached } = await loadFixture(setupEventFixture);
       
-      expect(await eventCtr.goalReached()).to.equal(false);
+      expect(await getEventGoalReached(eventCtr)).to.equal(false);
       
       await eventCtr.connect(deployer).updateRaised(ethers.parseEther("100"));
       
-      expect(await eventCtr.goalReached()).to.equal(true);
+      expect(await getEventGoalReached(eventCtr)).to.equal(true);
     });
 
     it("4r) should check deadline passed correctly", async () => {
-      const { eventCtr, advanceTime } = await loadFixture(setupEventFixture);
+      const { eventCtr, advanceTime, getEventDeadlinePassed } = await loadFixture(setupEventFixture);
       
-      expect(await eventCtr.fundingDeadlinePassed()).to.equal(false);
+      expect(await getEventDeadlinePassed(eventCtr)).to.equal(false);
       
       const deadline = await eventCtr.fundingDeadline();
       const currentTime = BigInt(await time.latest());
       const timeToAdvance = Number(deadline - currentTime + 1n);
       await advanceTime(timeToAdvance);
       
-      expect(await eventCtr.fundingDeadlinePassed()).to.equal(true);
+      expect(await getEventDeadlinePassed(eventCtr)).to.equal(true);
     });
 
     it("4s) should handle pause correctly", async () => {
