@@ -141,7 +141,7 @@ contract CharityTreasury {
         treasuryActive(orgId) 
     {
         require(amount > 0, "Amount must be positive");
-        require(!eventBalances[orgId][eventId].released, "Event already released");
+        require(eventBalances[orgId][eventId].amount == 0, "Event already released");
         
         // Transfer tokens from caller to this contract
         require(stablecoin.transferFrom(msg.sender, address(this), amount), "Transfer failed");

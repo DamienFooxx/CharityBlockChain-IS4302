@@ -114,13 +114,17 @@ contract CharityReputation {
             rep.score = _min(MAX_SCORE, rep.score + SCORE_INCREMENT);
         } else {
             rep.failedEvents++;
-            rep.score = _max(MIN_SCORE, rep.score - SCORE_DECREMENT);
+            if (rep.score >= SCORE_DECREMENT) {
+                rep.score = rep.score - SCORE_DECREMENT;
+            } else {
+                rep.score = MIN_SCORE;
+            }
         }
         
         rep.lastUpdated = block.timestamp;
         
         emit EventOutcomeRecorded(orgId, eventId, success);
-        // emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : -SCORE_DECREMENT);
+        emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : SCORE_DECREMENT);
     }
     
     /**
@@ -178,12 +182,16 @@ contract CharityReputation {
         if (passed) {
             rep.score = _min(MAX_SCORE, rep.score + 15);
         } else {
-            rep.score = _max(MIN_SCORE, rep.score - 25);
+            if (rep.score >= 25) {
+                rep.score = rep.score - 25;
+            } else {
+                rep.score = MIN_SCORE;
+            }
         }
         
         rep.lastUpdated = block.timestamp;
         
-        // emit ReputationUpdated(orgId, rep.score, passed ? 15 : -25);
+        emit ReputationUpdated(orgId, rep.score, passed ? 15 : 25);
     }
     
     // --- View Functions ---
