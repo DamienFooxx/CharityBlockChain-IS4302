@@ -77,6 +77,11 @@ describe("Charity contracts integration", function () {
       return eventCtr;
     };
 
+    // Helper to register charity (disambiguates function overload)
+    const registerCharity = async (signer, name, metaCID) => {
+      return await registry.connect(signer).getFunction("registerCharity", ["string", "string"])(name, metaCID);
+    };
+
     return {
       governance,
       sgd,
@@ -93,6 +98,7 @@ describe("Charity contracts integration", function () {
       user2,
       advanceTime,
       createEvent,
+      registerCharity,
     };
   }
 
@@ -101,10 +107,10 @@ describe("Charity contracts integration", function () {
   // =================================================================
   describe("1. CharityRegistry", function () {
     it("1a) should register charity with valid inputs and emit event", async () => {
-      const { registry, charityOwner } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, registerCharity } = await loadFixture(deployCharityFixture);
       
       await expect(
-        registry.connect(charityOwner).registerCharity("Charity A", "QmMeta")
+        registerCharity(charityOwner, "Charity A", "QmMeta")
       )
         .to.emit(registry, "CharityRegistered")
         .withArgs(1n, "Charity A", await charityOwner.getAddress());
@@ -120,32 +126,32 @@ describe("Charity contracts integration", function () {
     });
 
     it("1b) should reject empty name or metaCID", async () => {
-      const { registry, charityOwner } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, registerCharity } = await loadFixture(deployCharityFixture);
       
       await expect(
-        registry.connect(charityOwner).registerCharity("", "QmMeta")
+        registerCharity(charityOwner,"", "QmMeta")
       ).to.be.revertedWith("Name cannot be empty");
       
       await expect(
-        registry.connect(charityOwner).registerCharity("Charity A", "")
+        registerCharity(charityOwner,"Charity A", "")
       ).to.be.revertedWith("MetaCID cannot be empty");
     });
 
     it("1c) should prevent duplicate registration", async () => {
-      const { registry, charityOwner } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       
       await expect(
-        registry.connect(charityOwner).registerCharity("Charity B", "QmMeta2")
+        registerCharity(charityOwner,"Charity B", "QmMeta2")
       ).to.be.revertedWith("Address already registered");
     });
 
     it("1d) should allow multiple charities with different owners", async () => {
-      const { registry, charityOwner, charityOwner2 } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, charityOwner2, registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta1");
-      await registry.connect(charityOwner2).registerCharity("Charity B", "QmMeta2");
+      await registerCharity(charityOwner,"Charity A", "QmMeta1");
+      await registerCharity(charityOwner2,"Charity B", "QmMeta2");
       
       const orgId1 = await registry.addressToOrgId(await charityOwner.getAddress());
       const orgId2 = await registry.addressToOrgId(await charityOwner2.getAddress());
@@ -158,9 +164,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("1e) should enforce onlyAdmin for setApproval", async () => {
-      const { registry, charityOwner, deployer, user1 } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, deployer, user1 , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -173,10 +179,10 @@ describe("Charity contracts integration", function () {
     });
 
     it("1f) should update approval counts correctly", async () => {
-      const { registry, charityOwner, charityOwner2, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, charityOwner2, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta1");
-      await registry.connect(charityOwner2).registerCharity("Charity B", "QmMeta2");
+      await registerCharity(charityOwner,"Charity A", "QmMeta1");
+      await registerCharity(charityOwner2,"Charity B", "QmMeta2");
       
       let [, approvedCount] = await registry.getStats();
       expect(approvedCount).to.equal(0n);
@@ -193,9 +199,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("1g) should enforce onlyAdmin for setTreasury", async () => {
-      const { registry, treasury, charityOwner, deployer, user1 } = await loadFixture(deployCharityFixture);
+      const { registry, treasury, charityOwner, deployer, user1 , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -212,9 +218,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("1h) should allow owner to update profile metadata", async () => {
-      const { registry, charityOwner, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta1");
+      await registerCharity(charityOwner,"Charity A", "QmMeta1");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -232,9 +238,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("1i) should reject unauthorized profile updates", async () => {
-      const { registry, charityOwner, charityOwner2, user1 } = await loadFixture(deployCharityFixture);
+      const { registry, charityOwner, charityOwner2, user1 , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta1");
+      await registerCharity(charityOwner,"Charity A", "QmMeta1");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -247,16 +253,16 @@ describe("Charity contracts integration", function () {
     });
 
     it("1j) should handle pause/unpause correctly", async () => {
-      const { registry, governance, charityOwner, pauser, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, governance, charityOwner, pauser, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       // Pause system
       await governance.connect(pauser).pause();
       
       await expect(
-        registry.connect(charityOwner).registerCharity("Charity B", "QmMeta2")
+        registerCharity(charityOwner,"Charity B", "QmMeta2")
       ).to.be.revertedWith("Registry: System is paused");
       
       await expect(
@@ -276,7 +282,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("1k) should reject operations on non-existent charity", async () => {
-      const { registry, treasury, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, treasury, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
       await expect(
         registry.connect(deployer).setApproval(999n, true)
@@ -297,9 +303,9 @@ describe("Charity contracts integration", function () {
   // =================================================================
   describe("2. CharityReputation", function () {
     it("2a) should initialize reputation with default score", async () => {
-      const { registry, reputation, charityOwner, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await reputation.connect(deployer).initializeReputation(orgId);
@@ -314,9 +320,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2b) should reject duplicate initialization", async () => {
-      const { registry, reputation, charityOwner, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await reputation.connect(deployer).initializeReputation(orgId);
@@ -327,9 +333,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2c) should enforce onlyAdmin for initialization", async () => {
-      const { registry, reputation, charityOwner, user1 } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, user1 , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -338,9 +344,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2d) should reject operations on non-initialized org", async () => {
-      const { registry, reputation, charityOwner, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       await expect(
@@ -353,9 +359,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2e) should update score on successful event outcome", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -369,9 +375,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2f) should decrease score on failed event outcome", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -385,9 +391,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2g) should prevent duplicate event outcome recording", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -399,9 +405,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2h) should enforce onlyOracle for outcome updates", async () => {
-      const { registry, reputation, charityOwner, deployer, user1 } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, user1 , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -411,9 +417,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2i) should cap score at MAX_SCORE", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -431,9 +437,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2j) should cap score at MIN_SCORE", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -451,9 +457,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2k) should record votes and adjust score based on ratio", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -475,9 +481,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2l) should update on finalize correctly", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -493,9 +499,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2m) should return correct reputation tier", async () => {
-      const { registry, reputation, charityOwner, charityOwner2, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, charityOwner2, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -506,7 +512,7 @@ describe("Charity contracts integration", function () {
       expect(await reputation.getReputationTier(orgId)).to.equal(1n);
       
       // Test tier 5 (excellent) - use different charity owner
-      await registry.connect(charityOwner2).registerCharity("Charity B", "QmMeta2");
+      await registerCharity(charityOwner2,"Charity B", "QmMeta2");
       const orgId2 = await registry.addressToOrgId(await charityOwner2.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId2);
       for (let i = 1; i <= 50; i++) {
@@ -516,9 +522,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2n) should calculate success rate correctly", async () => {
-      const { registry, reputation, charityOwner, deployer, oracle } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer, oracle , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -534,9 +540,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("2o) should handle zero votes correctly", async () => {
-      const { registry, reputation, charityOwner, deployer } = await loadFixture(deployCharityFixture);
+      const { registry, reputation, charityOwner, deployer , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await reputation.connect(deployer).initializeReputation(orgId);
       
@@ -551,9 +557,9 @@ describe("Charity contracts integration", function () {
   describe("3. CharityTreasury", function () {
     async function setupTreasuryFixture() {
       const fixture = await loadFixture(deployCharityFixture);
-      const { registry, treasury, charityOwner, deployer } = fixture;
+      const { registry, treasury, charityOwner, deployer, registerCharity } = fixture;
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await registry.connect(deployer).setApproval(orgId, true);
       await registry.connect(deployer).setTreasury(orgId, await treasury.getAddress());
@@ -766,9 +772,9 @@ describe("Charity contracts integration", function () {
   describe("4. CharityEvent", function () {
     async function setupEventFixture() {
       const fixture = await loadFixture(deployCharityFixture);
-      const { registry, createEvent, charityOwner } = fixture;
+      const { registry, createEvent, charityOwner, registerCharity } = fixture;
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       const eventCtr = await createEvent(charityOwner, orgId, ethers.parseEther("100"), 3600);
       
@@ -776,9 +782,9 @@ describe("Charity contracts integration", function () {
     }
 
     it("4a) should deploy event with correct initial state", async () => {
-      const { createEvent, registry, charityOwner, beneficiary } = await loadFixture(deployCharityFixture);
+      const { createEvent, registry, charityOwner, beneficiary, registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       const eventCtr = await createEvent(charityOwner, orgId, ethers.parseEther("100"), 3600);
       
@@ -790,7 +796,7 @@ describe("Charity contracts integration", function () {
     });
 
     it("4b) should reject invalid event creation", async () => {
-      const { registry, governance, charityOwner } = await loadFixture(deployCharityFixture);
+      const { registry, governance, charityOwner , registerCharity } = await loadFixture(deployCharityFixture);
       
       const CharityEvent = await ethers.getContractFactory("CharityEvent");
       
@@ -1099,10 +1105,10 @@ describe("Charity contracts integration", function () {
   // =================================================================
   describe("5. Integration Tests", function () {
     it("5a) full flow: register -> approve -> create treasury -> fund -> verify -> release", async () => {
-      const { registry, treasury, reputation, sgd, createEvent, deployer, oracle, charityOwner, beneficiary } = await loadFixture(deployCharityFixture);
+      const { registry, treasury, reputation, sgd, createEvent, deployer, oracle, charityOwner, beneficiary , registerCharity } = await loadFixture(deployCharityFixture);
       
       // Register charity
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       
       // Approve and set treasury
@@ -1147,9 +1153,9 @@ describe("Charity contracts integration", function () {
     });
 
     it("5b) multiple events for same charity", async () => {
-      const { registry, treasury, reputation, createEvent, deployer, oracle, charityOwner } = await loadFixture(deployCharityFixture);
+      const { registry, treasury, reputation, createEvent, deployer, oracle, charityOwner , registerCharity } = await loadFixture(deployCharityFixture);
       
-      await registry.connect(charityOwner).registerCharity("Charity A", "QmMeta");
+      await registerCharity(charityOwner,"Charity A", "QmMeta");
       const orgId = await registry.addressToOrgId(await charityOwner.getAddress());
       await registry.connect(deployer).setApproval(orgId, true);
       await registry.connect(deployer).setTreasury(orgId, await treasury.getAddress());
