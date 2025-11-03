@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "./SGDCoin.sol";
 import "./Registry.sol";
+import "./EscrowVault.sol";
 
 /**
  * @title DonorPledges
@@ -116,9 +117,10 @@ contract DonorPledges is Registry {
         require(_amount > 0, "Amount must be greater than 0");
         require(sgdToken.balanceOf(msg.sender) >= _amount, "Insufficient balance");
         require(sgdToken.allowance(msg.sender, address(this)) >= _amount, "Insufficient allowance");
-        
-        // Transfer tokens from donor to this contract (escrow)
-        require(sgdToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed");
+        // Transfer tokens from donor to the global EscrowVault
+        address escrowAddr = governance.getContractAddress("EscrowVault");
+        require(escrowAddr != address(0), "Escrow not set");
+        require(sgdToken.transferFrom(msg.sender, escrowAddr, _amount), "Transfer failed");
         
         // Create pledge
         pledgeCounter++;
@@ -132,13 +134,16 @@ contract DonorPledges is Registry {
             hasVoted: false
         });
         
-        // Update mappings
+    // Update mappings
         donorPledges[msg.sender].push(pledgeCounter);
         eventPledges[_eventId].push(pledgeCounter);
         donorEventStake[msg.sender][_eventId] += _amount;
         totalEventPledges[_eventId] += _amount;
         
-        emit PledgeCreated(pledgeCounter, msg.sender, _eventId, _amount, block.timestamp);
+    // Record deposit in escrow vault
+    EscrowVault(escrowAddr).depositPledge(pledgeCounter, msg.sender, _eventId, _amount);
+
+    emit PledgeCreated(pledgeCounter, msg.sender, _eventId, _amount, block.timestamp);
         
         return pledgeCounter;
     }
@@ -157,16 +162,18 @@ contract DonorPledges is Registry {
         
         uint256 amount = pledge.amount;
         bytes32 eventId = pledge.eventId;
-        
+        // Mark pledge inactive locally first to prevent re-entrancy-style issues
         pledge.isActive = false;
-        
+
         // Update mappings
         donorEventStake[msg.sender][eventId] -= amount;
         totalEventPledges[eventId] -= amount;
-        
-        // Transfer tokens back to donor
-        require(sgdToken.transfer(msg.sender, amount), "Transfer failed");
-        
+
+        // Ask EscrowVault to refund the pledge (tokens are held in global escrow)
+        address escrowAddr = governance.getContractAddress("EscrowVault");
+        require(escrowAddr != address(0), "Escrow not set");
+        EscrowVault(escrowAddr).refundPledge(_pledgeId, msg.sender);
+
         emit PledgeWithdrawn(_pledgeId, msg.sender, amount);
     }
 
@@ -293,28 +300,31 @@ contract DonorPledges is Registry {
         returns (uint256) 
     {
         require(_charityAddress != address(0), "Invalid charity address");
-        
+        // Delegate the actual token transfer to the EscrowVault (global bank)
+        address escrowAddr = governance.getContractAddress("EscrowVault");
+        require(escrowAddr != address(0), "Escrow not set");
+
+        // Ask escrow to release funds for this event to the charity (onlyOracle or authorized caller allowed in Escrow)
+        EscrowVault(escrowAddr).releaseIfVerified(_eventId, _charityAddress);
+
+        // Locally deactivate pledges and update accounting
         uint256[] memory pledgeIds = eventPledges[_eventId];
         uint256 totalAmount = 0;
-        
-        // Calculate total and deactivate pledges
         for (uint256 i = 0; i < pledgeIds.length; i++) {
-            if (pledges[pledgeIds[i]].isActive) {
-                totalAmount += pledges[pledgeIds[i]].amount;
-                pledges[pledgeIds[i]].isActive = false;
+            uint256 pid = pledgeIds[i];
+            if (pledges[pid].isActive) {
+                uint256 amt = pledges[pid].amount;
+                totalAmount += amt;
+                pledges[pid].isActive = false;
+                // reduce donorEventStake
+                donorEventStake[pledges[pid].donor][_eventId] -= amt;
             }
         }
-        
-        require(totalAmount > 0, "No funds to release");
-        
+
         // Update total
         totalEventPledges[_eventId] = 0;
-        
-        // Transfer funds to charity
-        require(sgdToken.transfer(_charityAddress, totalAmount), "Transfer failed");
-        
+
         emit FundsReleased(_eventId, _charityAddress, totalAmount);
-        
         return totalAmount;
     }
 
@@ -330,26 +340,29 @@ contract DonorPledges is Registry {
     {
         uint256[] memory pledgeIds = eventPledges[_eventId];
         uint256 totalRefunded = 0;
-        
+        address escrowAddr = governance.getContractAddress("EscrowVault");
+        require(escrowAddr != address(0), "Escrow not set");
+
         for (uint256 i = 0; i < pledgeIds.length; i++) {
             Pledge storage pledge = pledges[pledgeIds[i]];
-            
+
             if (pledge.isActive) {
                 uint256 amount = pledge.amount;
                 address donor = pledge.donor;
-                
+
                 pledge.isActive = false;
                 donorEventStake[donor][_eventId] -= amount;
-                
-                require(sgdToken.transfer(donor, amount), "Refund transfer failed");
+
+                // Ask escrow to refund this pledge
+                EscrowVault(escrowAddr).refundPledge(pledge.pledgeId, donor);
                 totalRefunded += amount;
-                
+
                 emit PledgeWithdrawn(pledge.pledgeId, donor, amount);
             }
         }
-        
+
         totalEventPledges[_eventId] = 0;
-        
+
         return totalRefunded;
     }
 }
