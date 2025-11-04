@@ -26,7 +26,8 @@ describe("AttestorVoting", function () {
     const governance = await Governance.deploy(
       oracle.address,
       owner.address,
-      7000n // 70% quorum
+      7000n, // 70% quorum
+      7000n // 70% pass
     );
     await governance.waitForDeployment();
 

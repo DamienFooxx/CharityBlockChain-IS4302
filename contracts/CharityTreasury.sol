@@ -141,7 +141,7 @@ contract CharityTreasury {
         treasuryActive(orgId) 
     {
         require(amount > 0, "Amount must be positive");
-        require(!eventBalances[orgId][eventId].released, "Event already released");
+        require(eventBalances[orgId][eventId].amount == 0, "Event already released");
         
         // Transfer tokens from caller to this contract
         require(stablecoin.transferFrom(msg.sender, address(this), amount), "Transfer failed");
@@ -253,49 +253,39 @@ contract CharityTreasury {
     
     // --- View Functions ---
     
-    /**
-     * @dev Get treasury balance
-     * @param orgId The organization ID
-     * @return totalBalance Total balance in the treasury
-     * @return availableBalance Available balance for withdrawal
-     * @return lockedBalance Locked balance for events
-     */
-    function balanceOf(uint256 orgId) 
-        external 
-        view 
-        treasuryExists(orgId) 
-        returns (uint256 totalBalance, uint256 availableBalance, uint256 lockedBalance) 
-    {
-        TreasuryData memory treasury = treasuries[orgId];
-        return (treasury.totalBalance, treasury.availableBalance, treasury.lockedBalance);
-    }
+    // removed unnecessary getters; use public getters on mappings/state instead
     
+    // --- Compatibility Wrapper API ---
     /**
-     * @dev Get treasury data
-     * @param orgId The organization ID
-     * @return data The complete treasury data
+     * @notice Releases funds to a charity wallet (shim). Only treasury owner may distribute its org funds.
      */
-    function getTreasuryData(uint256 orgId) 
-        external 
-        view 
-        treasuryExists(orgId) 
-        returns (TreasuryData memory data) 
-    {
-        return treasuries[orgId];
+    function distributeFunds(address charity, uint256 amount) external {
+        require(charity != address(0), "Invalid recipient address");
+        uint256 orgId = addressToOrgId[msg.sender];
+        require(orgId != 0, "Unknown treasury owner");
+        TreasuryData storage t = treasuries[orgId];
+        require(t.owner == msg.sender, "Not treasury owner");
+        require(amount > 0 && amount <= t.availableBalance, "Insufficient available");
+        t.totalBalance -= amount;
+        t.availableBalance -= amount;
+        t.lastActivity = block.timestamp;
+        require(stablecoin.transfer(charity, amount), "Transfer failed");
+        emit FundsWithdrawn(orgId, charity, amount);
     }
-    
+
     /**
-     * @dev Get event balance information
-     * @param orgId The organization ID
-     * @param eventId The event ID
-     * @return balance The event balance data
+     * @notice Pays a validator commission (shim). Only admin may execute.
      */
-    function getEventBalance(uint256 orgId, uint256 eventId) 
-        external 
-        view 
-        returns (EventBalance memory balance) 
-    {
-        return eventBalances[orgId][eventId];
+    function payValidator(address validator, uint256 reward) external onlyAdmin {
+        require(validator != address(0), "Invalid validator");
+        require(reward > 0, "Invalid reward");
+        // Use a system pool under orgId 0 for commissions if initialized; otherwise revert
+        TreasuryData storage t = treasuries[0];
+        require(t.owner != address(0) && t.active, "Commission pool not set");
+        require(reward <= t.availableBalance, "Insufficient pool");
+        t.totalBalance -= reward;
+        t.availableBalance -= reward;
+        t.lastActivity = block.timestamp;
+        require(stablecoin.transfer(validator, reward), "Transfer failed");
     }
-    
 }

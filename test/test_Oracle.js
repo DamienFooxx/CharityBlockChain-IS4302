@@ -7,6 +7,8 @@ describe("Oracle", function () {
   const eventId = ethers.id("EVENT_1");
   const V_SEED = ethers.id("VOTER_SEED");
   const A_SEED = ethers.id("ATTESTOR_SEED");
+  const QUORUM_BPS = 7000n; // 70%
+  const PASS_MAJORITY_BPS = 7000n; // 70%
 
   // Deploys the full suite of contracts orchestrated by the Oracle
   async function deployOracleFixture() {
@@ -28,7 +30,8 @@ describe("Oracle", function () {
     const governance = await Governance.deploy(
       oracle.address,
       owner.address,
-      7000n // 70% quorum
+      QUORUM_BPS, // 70% quorum
+      PASS_MAJORITY_BPS, 
     );
     await governance.waitForDeployment();
 

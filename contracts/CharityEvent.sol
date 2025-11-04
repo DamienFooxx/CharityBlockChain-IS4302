@@ -232,28 +232,9 @@ contract CharityEvent is Registry {
     }
 
     // --- View Functions ---
-
-    /**
-     * @dev Check if event has reached its funding goal
-     */
-    function goalReached() external view returns (bool) {
-        return totalRaised >= fundingGoal;
-    }
-
-    /**
-     * @dev Check if funding deadline has passed
-     */
-    function fundingDeadlinePassed() external view returns (bool) {
-        return block.timestamp >= fundingDeadline;
-    }
-
-    /**
-     * @dev Get last per-stream verification results
-     */
-    function getPerStreamLast() external view returns (bool[3] memory) {
-        return perStreamLast;
-    }
-
+    
+    // removed unnecessary getters; rely on public state variables
+    
     /**
      * @dev Get event summary
      */
@@ -300,5 +281,70 @@ contract CharityEvent is Registry {
         }
 
         emit PhaseChanged(eventId, oldPhase, newPhase);
+    }
+
+    // --- Compatibility Wrapper API ---
+    /**
+     * @notice Initializes a new charity event (shim). This contract is already constructed with its
+     *         parameters; this function records a new description hash and adjusts goal/deadline if still in FUNDING.
+     */
+    function createEvent(string calldata _name, uint256 _goal, uint256 _duration, string calldata _metadataHash) external onlyCharityOwner whenNotPaused inPhase(EventPhase.FUNDING) {
+        require(bytes(_metadataHash).length > 0, "Invalid metadata");
+        if (_goal > 0) {
+            fundingGoal = _goal;
+        }
+        if (_duration > 0) {
+            fundingDeadline = block.timestamp + _duration;
+        }
+        eventDescription = _name;
+        evidenceCID = _metadataHash; // track initial metadata
+    }
+
+    /**
+     * @notice Locks donor funds (shim). For integration, this increments raised balance.
+     */
+    function stakeDonation(uint256 amount) external whenNotPaused inPhase(EventPhase.FUNDING) {
+        require(amount > 0, "Amount must be > 0");
+        totalRaised += amount;
+        emit FundsRaised(eventId, totalRaised);
+        if (totalRaised >= fundingGoal) {
+            _transitionPhase(EventPhase.CLOSED);
+        }
+    }
+
+    /**
+     * @notice Submits post-event proof (shim).
+     */
+    function submitProof(string calldata proofHash) external onlyCharityOwner whenNotPaused inPhase(EventPhase.CLOSED) {
+        require(bytes(proofHash).length > 0, "Invalid proof");
+        evidenceCID = proofHash;
+        _transitionPhase(EventPhase.VERIFICATION);
+        emit EvidenceSubmitted(eventId, proofHash);
+    }
+
+    /**
+     * @notice Finalizes event (shim). Mirrors setVerified path.
+     */
+    function finalizeEvent(bool approved_) external onlyOracle whenNotPaused inPhase(EventPhase.VERIFICATION) {
+        verified = approved_;
+        perStreamLast = [approved_, approved_, approved_];
+        verifiedAt = block.timestamp;
+        _transitionPhase(approved_ ? EventPhase.APPROVED : EventPhase.REJECTED);
+        emit VerifiedSet(eventId, approved_, perStreamLast);
+    }
+
+    /**
+     * @notice Returns simplified event metadata for front-end display.
+     */
+    function getSummary() external view returns (
+        string memory name_,
+        uint256 goal_,
+        uint256 durationRemaining_,
+        string memory metadataHash_
+    ) {
+        name_ = eventDescription;
+        goal_ = fundingGoal;
+        durationRemaining_ = block.timestamp >= fundingDeadline ? 0 : (fundingDeadline - block.timestamp);
+        metadataHash_ = evidenceCID;
     }
 }
