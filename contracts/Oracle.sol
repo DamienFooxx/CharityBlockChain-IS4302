@@ -428,7 +428,7 @@ contract Oracle {
         if (modules[eventId].charity != address(0)) {
             beneficiary = CharityEvent(modules[eventId].charity).beneficiary();
         }
-        EscrowVault(escrow).releaseIfVerified(eventId, beneficiary);
+        EscrowVault(escrow).releaseToVerifiedBeneficiary(eventId, beneficiary);
 
         emit Disbursed(eventId, beneficiary);
         // Mark event as completed after successful disbursement

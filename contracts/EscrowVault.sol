@@ -32,9 +32,22 @@ contract EscrowVault is Registry {
 
     // --- Events ---
     event ContractAuthorized(address indexed contractAddr, bool authorized);
-    event PledgeDeposited(uint256 indexed pledgeId, bytes32 indexed eventId, address indexed donor, uint256 amount);
-    event PledgeRefunded(uint256 indexed pledgeId, address indexed to, uint256 amount);
-    event EventReleased(bytes32 indexed eventId, address indexed to, uint256 amount);
+    event PledgeDeposited(
+        uint256 indexed pledgeId,
+        bytes32 indexed eventId,
+        address indexed donor,
+        uint256 amount
+    );
+    event PledgeRefunded(
+        uint256 indexed pledgeId,
+        address indexed to,
+        uint256 amount
+    );
+    event EventReleased(
+        bytes32 indexed eventId,
+        address indexed to,
+        uint256 amount
+    );
 
     modifier onlyAuthorized() {
         require(authorizedContracts[msg.sender], "EscrowVault: Not authorized");
@@ -46,7 +59,10 @@ contract EscrowVault is Registry {
         sgdToken = SGDCoin(_sgdToken);
     }
 
-    function authorizeContract(address _contract, bool _authorized) external onlyAdmin {
+    function authorizeContract(
+        address _contract,
+        bool _authorized
+    ) external onlyAdmin {
         require(_contract != address(0), "EscrowVault: zero addr");
         authorizedContracts[_contract] = _authorized;
         emit ContractAuthorized(_contract, _authorized);
@@ -56,7 +72,12 @@ contract EscrowVault is Registry {
      * @notice Record a pledge deposit. The ERC20 tokens should already have been transferred
      * to this contract via transferFrom in the caller before calling this method.
      */
-    function depositPledge(uint256 _pledgeId, address _donor, bytes32 _eventId, uint256 _amount) external onlyAuthorized whenNotPaused {
+    function depositPledge(
+        uint256 _pledgeId,
+        address _donor,
+        bytes32 _eventId,
+        uint256 _amount
+    ) external onlyAuthorized whenNotPaused {
         require(_pledgeId > 0, "EscrowVault: bad pledgeId");
         require(_donor != address(0), "EscrowVault: zero donor");
         require(_eventId != bytes32(0), "EscrowVault: zero eventId");
@@ -76,7 +97,10 @@ contract EscrowVault is Registry {
      * @notice Refund a single pledge back to the donor. Callable by authorized contracts
      * (e.g., DonorPledges) when a pledge is withdrawn or an event is refunded.
      */
-    function refundPledge(uint256 _pledgeId, address _to) external onlyAuthorized whenNotPaused returns (uint256) {
+    function refundPledge(
+        uint256 _pledgeId,
+        address _to
+    ) external onlyAuthorized whenNotPaused returns (uint256) {
         require(_to != address(0), "EscrowVault: zero to");
         require(pledgeActive[_pledgeId], "EscrowVault: pledge inactive");
 
@@ -95,10 +119,16 @@ contract EscrowVault is Registry {
      * @notice Release all active pledges for an event to the beneficiary. Callable by Oracle (via governance role)
      * or by authorized contracts.
      */
-    function releaseIfVerified(bytes32 eventId, address to) external whenNotPaused {
+    function releaseToVerifiedBeneficiary(
+        bytes32 eventId,
+        address to
+    ) external whenNotPaused {
         // allow Oracle role OR authorized contracts to call
         if (!authorizedContracts[msg.sender]) {
-            require(governance.hasRole(governance.ORACLE_ROLE(), msg.sender), "EscrowVault: not oracle");
+            require(
+                governance.hasRole(governance.ORACLE_ROLE(), msg.sender),
+                "EscrowVault: not oracle"
+            );
         }
 
         require(eventId != bytes32(0), "EscrowVault: zero eventId");
