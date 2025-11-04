@@ -114,13 +114,17 @@ contract CharityReputation {
             rep.score = _min(MAX_SCORE, rep.score + SCORE_INCREMENT);
         } else {
             rep.failedEvents++;
-            rep.score = _max(MIN_SCORE, rep.score - SCORE_DECREMENT);
+            if (rep.score >= SCORE_DECREMENT) {
+                rep.score = rep.score - SCORE_DECREMENT;
+            } else {
+                rep.score = MIN_SCORE;
+            }
         }
         
         rep.lastUpdated = block.timestamp;
         
         emit EventOutcomeRecorded(orgId, eventId, success);
-        // emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : -SCORE_DECREMENT);
+        emit ReputationUpdated(orgId, rep.score, success ? SCORE_INCREMENT : SCORE_DECREMENT);
     }
     
     /**
@@ -178,12 +182,16 @@ contract CharityReputation {
         if (passed) {
             rep.score = _min(MAX_SCORE, rep.score + 15);
         } else {
-            rep.score = _max(MIN_SCORE, rep.score - 25);
+            if (rep.score >= 25) {
+                rep.score = rep.score - 25;
+            } else {
+                rep.score = MIN_SCORE;
+            }
         }
         
         rep.lastUpdated = block.timestamp;
         
-        // emit ReputationUpdated(orgId, rep.score, passed ? 15 : -25);
+        emit ReputationUpdated(orgId, rep.score, passed ? 15 : 25);
     }
     
     // --- View Functions ---
@@ -271,5 +279,47 @@ contract CharityReputation {
      */
     function _max(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a : b;
+    }
+
+    // --- Compatibility Wrapper API ---
+    /**
+     * @notice Updates reputation by wallet and approved flag (shim).
+     */
+    function updateReputation(address charityWallet, bool approved_) external onlyOracle {
+        require(charityWallet != address(0), "Invalid wallet");
+        // In this simplified shim we assume orgId == 1 for first-time mapping if missing
+        // Preferably, integrate with CharityRegistry to resolve orgId by wallet.
+        // Here, try to read an orgId-like mapping by hashing the wallet for demo purposes.
+        uint256 orgId = uint256(uint160(charityWallet));
+        if (reputationScores[orgId].lastUpdated == 0) {
+            reputationScores[orgId] = ReputationData({
+                score: INITIAL_SCORE,
+                totalEvents: 0,
+                successfulEvents: 0,
+                failedEvents: 0,
+                lastUpdated: block.timestamp,
+                positiveVotes: 0,
+                negativeVotes: 0
+            });
+        }
+        ReputationData storage rep = reputationScores[orgId];
+        rep.totalEvents++;
+        if (approved_) {
+            rep.successfulEvents++;
+            rep.score = _min(MAX_SCORE, rep.score + 10);
+        } else {
+            rep.failedEvents++;
+            rep.score = _max(MIN_SCORE, rep.score - 20);
+        }
+        rep.lastUpdated = block.timestamp;
+        emit ReputationUpdated(orgId, rep.score, approved_ ? 10 : 20);
+    }
+
+    /**
+     * @notice Retrieves public score by wallet (shim).
+     */
+    function getReputation(address charityWallet) external view returns (uint256) {
+        uint256 orgId = uint256(uint160(charityWallet));
+        return reputationScores[orgId].score;
     }
 }
