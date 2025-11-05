@@ -3,7 +3,7 @@ const { ethers } = require("hardhat");
 
 // as donor pledge is interacting with escrowvault, hence this test is for the whole flow for both contracts
 
-describe("DonorPledges <-> EscrowVault integration", function () {
+describe("DonorPledges: integration with EscrowVault", function () {
   let deployer, donor, charity, oracle, pauser;
   let SGDCoin, Governance, EscrowVault, DonorPledges;
   let sgdCoin, governance, escrow, pledges;
@@ -23,28 +23,31 @@ describe("DonorPledges <-> EscrowVault integration", function () {
     await sgdCoin.mint(donor2.address, 1500n);
 
     Governance = await ethers.getContractFactory("Governance");
-    governance = await Governance.deploy(oracle.address, owner.address, 7000n);
+    governance = await Governance.deploy(
+      oracle.address,
+      owner.address,
+      7000n,
+      7000n
+    );
     await governance.waitForDeployment();
     console.log("governance.address =", governance.target);
-
-    EscrowVault = await ethers.getContractFactory("EscrowVault");
-    escrow = await EscrowVault.deploy(governance.target, sgdCoin.target);
-    await escrow.waitForDeployment();
-    console.log("escrow.address =", escrow.target);
-
-    await governance
-      .connect(owner)
-      .setContractAddress("EscrowVault", escrow.target);
 
     DonorPledges = await ethers.getContractFactory("DonorPledges");
     pledges = await DonorPledges.deploy(governance.target, sgdCoin.target);
     await pledges.waitForDeployment();
     console.log("pledges.address =", pledges.target);
 
+    EscrowVault = await ethers.getContractFactory("EscrowVault");
+    escrow = await EscrowVault.deploy(governance.target, sgdCoin.target);
+    await escrow.waitForDeployment();
+    console.log("escrow.address =", escrow.target);
+    await governance
+      .connect(owner)
+      .setContractAddress("EscrowVault", escrow.target);
     await escrow.connect(owner).authorizeContract(pledges.target, true);
   });
 
-  it("flow from donor pledge: donorpledge calls createPledge, then transfers tokens to EscrowVault to records pledge", async function () {
+  it("1) flow from donor pledge: donorpledge calls createPledge, then transfers tokens to EscrowVault to records pledge", async function () {
     await sgdCoin.connect(donor2).approve(pledges.target, pledge);
 
     // Create pledge and get receipt
@@ -81,7 +84,7 @@ describe("DonorPledges <-> EscrowVault integration", function () {
   });
 
   // continuous with the above test case
-  it("withdrawPledge calls EscrowVault.refundPledge and returns tokens", async function () {
+  it("2) withdrawPledge calls EscrowVault.refundPledge and returns tokens", async function () {
     const balAfter = await sgdCoin.balanceOf(donor2.address);
     expect(balAfter).to.equal(1000n);
 

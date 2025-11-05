@@ -40,13 +40,12 @@ describe("Oracle", function () {
     await sgdCoin.waitForDeployment();
 
     const EscrowVault = await ethers.getContractFactory("EscrowVault");
-    const escrowVault = await EscrowVault.deploy();
+    // Deploy EscrowVault with governance and token addresses (constructor requires both)
+    const escrowVault = await EscrowVault.deploy(governance.target, sgdCoin.target);
     await escrowVault.waitForDeployment();
 
     // --- Register EscrowVault with Governance ---
-    await governance
-      .connect(owner)
-      .setContractAddress("EscrowVault", escrowVault.target);
+    await governance.connect(owner).setContractAddress("EscrowVault", escrowVault.target);
 
     // --- Deploy Registries ---
     const DonorRegistry = await ethers.getContractFactory("DonorRegistry");
@@ -66,6 +65,9 @@ describe("Oracle", function () {
       sgdCoin.target
     );
     await donorPledges.waitForDeployment();
+
+    // Authorize DonorPledges in the EscrowVault so depositPledge can be called
+    await escrowVault.connect(owner).authorizeContract(donorPledges.target, true);
 
     const DonorRanking = await ethers.getContractFactory("DonorRanking");
     const donorRanking = await DonorRanking.deploy(governance.target);

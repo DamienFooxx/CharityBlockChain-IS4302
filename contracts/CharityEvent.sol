@@ -232,9 +232,9 @@ contract CharityEvent is Registry {
     }
 
     // --- View Functions ---
-    
+
     // removed unnecessary getters; rely on public state variables
-    
+
     /**
      * @dev Get event summary
      */
@@ -288,7 +288,12 @@ contract CharityEvent is Registry {
      * @notice Initializes a new charity event (shim). This contract is already constructed with its
      *         parameters; this function records a new description hash and adjusts goal/deadline if still in FUNDING.
      */
-    function createEvent(string calldata _name, uint256 _goal, uint256 _duration, string calldata _metadataHash) external onlyCharityOwner whenNotPaused inPhase(EventPhase.FUNDING) {
+    function createEvent(
+        string calldata _name,
+        uint256 _goal,
+        uint256 _duration,
+        string calldata _metadataHash
+    ) external onlyCharityOwner whenNotPaused inPhase(EventPhase.FUNDING) {
         require(bytes(_metadataHash).length > 0, "Invalid metadata");
         if (_goal > 0) {
             fundingGoal = _goal;
@@ -303,7 +308,9 @@ contract CharityEvent is Registry {
     /**
      * @notice Locks donor funds (shim). For integration, this increments raised balance.
      */
-    function stakeDonation(uint256 amount) external whenNotPaused inPhase(EventPhase.FUNDING) {
+    function stakeDonation(
+        uint256 amount
+    ) external whenNotPaused inPhase(EventPhase.FUNDING) {
         require(amount > 0, "Amount must be > 0");
         totalRaised += amount;
         emit FundsRaised(eventId, totalRaised);
@@ -315,7 +322,9 @@ contract CharityEvent is Registry {
     /**
      * @notice Submits post-event proof (shim).
      */
-    function submitProof(string calldata proofHash) external onlyCharityOwner whenNotPaused inPhase(EventPhase.CLOSED) {
+    function submitProof(
+        string calldata proofHash
+    ) external onlyCharityOwner whenNotPaused inPhase(EventPhase.CLOSED) {
         require(bytes(proofHash).length > 0, "Invalid proof");
         evidenceCID = proofHash;
         _transitionPhase(EventPhase.VERIFICATION);
@@ -325,7 +334,9 @@ contract CharityEvent is Registry {
     /**
      * @notice Finalizes event (shim). Mirrors setVerified path.
      */
-    function finalizeEvent(bool approved_) external onlyOracle whenNotPaused inPhase(EventPhase.VERIFICATION) {
+    function finalizeEvent(
+        bool approved_
+    ) external onlyOracle whenNotPaused inPhase(EventPhase.VERIFICATION) {
         verified = approved_;
         perStreamLast = [approved_, approved_, approved_];
         verifiedAt = block.timestamp;
@@ -336,15 +347,21 @@ contract CharityEvent is Registry {
     /**
      * @notice Returns simplified event metadata for front-end display.
      */
-    function getSummary() external view returns (
-        string memory name_,
-        uint256 goal_,
-        uint256 durationRemaining_,
-        string memory metadataHash_
-    ) {
+    function getSummary()
+        external
+        view
+        returns (
+            string memory name_,
+            uint256 goal_,
+            uint256 durationRemaining_,
+            string memory metadataHash_
+        )
+    {
         name_ = eventDescription;
         goal_ = fundingGoal;
-        durationRemaining_ = block.timestamp >= fundingDeadline ? 0 : (fundingDeadline - block.timestamp);
+        durationRemaining_ = block.timestamp >= fundingDeadline
+            ? 0
+            : (fundingDeadline - block.timestamp);
         metadataHash_ = evidenceCID;
     }
 }

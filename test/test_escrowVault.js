@@ -3,7 +3,7 @@ const { ethers } = require("hardhat");
 
 // this test case does not cover function refundPledge and depositPledge. these are tested in the integration test with DonorPledge contract, found in test_donorPledges.js
 
-describe("DonorPledges <-> EscrowVault integration", function () {
+describe("EscrowVault: ", function () {
   let owner, donor1, donor2, charity, oracle, beneficiary;
   let SGDCoin, Governance, EscrowVault, DonorPledges;
   let sgdCoin, governance, escrow, pledges;
@@ -26,7 +26,12 @@ describe("DonorPledges <-> EscrowVault integration", function () {
     await sgdCoin.mint(donor2.address, 1000n);
 
     Governance = await ethers.getContractFactory("Governance");
-    governance = await Governance.deploy(oracle.address, owner.address, 7000n);
+    governance = await Governance.deploy(
+      oracle.address,
+      owner.address,
+      7000n,
+      7000n
+    );
     await governance.waitForDeployment();
     console.log("governance.address =", governance.target);
 
@@ -46,7 +51,7 @@ describe("DonorPledges <-> EscrowVault integration", function () {
 
     //check that
   });
-  it("escrowVault holds token mapping from donorPledge, and holds token within contract", async function () {
+  it("1) escrowVault holds token mapping from donorPledge, and holds token within contract", async function () {
     await sgdCoin.connect(donor1).approve(pledges.target, 100n);
     await sgdCoin.connect(donor2).approve(pledges.target, 500n);
 
@@ -73,7 +78,7 @@ describe("DonorPledges <-> EscrowVault integration", function () {
     expect(escrowBal).to.equal(600n);
   });
 
-  it("releases all pledges for an event to beneficiary when called by oracle", async function () {
+  it("2) releases all pledges for an event to beneficiary when called by oracle", async function () {
     // beneficiary balance before
     const balBefore = await sgdCoin.balanceOf(beneficiary.address);
 
