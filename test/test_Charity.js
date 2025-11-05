@@ -1416,6 +1416,8 @@ describe("Charity contracts integration", function () {
 
       await eventCtr.connect(oracle).setVerified(false, [false, false, false]);
 
+      const summaryAfter = await eventCtr.getEventSummary();
+
       expect(summaryAfter[2]).to.equal(5n); // REJECTED
       expect(summaryAfter[6]).to.equal(false); // verified (index 6, not 5)
     });
