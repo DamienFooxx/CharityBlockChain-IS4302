@@ -16,7 +16,7 @@ describe("DonorVoting", function () {
     const [owner, oracle, donor1, donor2, donor3, other] =
       await ethers.getSigners();
 
-    // Deploy Dependencies 
+    // Deploy Dependencies
 
     // 1. Governance (handles roles)
     const Governance = await ethers.getContractFactory("Governance");
@@ -46,6 +46,16 @@ describe("DonorVoting", function () {
     );
     await donorPledges.waitForDeployment();
 
+    // Deploy EscrowVault and register it so createPledge finds the vault
+    const EscrowVault = await ethers.getContractFactory("EscrowVault");
+    const escrow = await EscrowVault.deploy(governance.target, sgdCoin.target);
+    await escrow.waitForDeployment();
+    await governance
+      .connect(owner)
+      .setContractAddress("EscrowVault", escrow.target);
+    // authorize donorPledges to call depositPledge
+    await escrow.connect(owner).authorizeContract(donorPledges.target, true);
+
     // 5. DonorRanking (gives 1x weight by default)
     const DonorRanking = await ethers.getContractFactory("DonorRanking");
     const donorRanking = await DonorRanking.deploy(governance.target);
@@ -62,7 +72,7 @@ describe("DonorVoting", function () {
     );
     await donorVoting.waitForDeployment();
 
-    // Initial Setup for Donors 
+    // Initial Setup for Donors
     const donors = [donor1, donor2, donor3];
     const pledges = [1000n, 2000n, 5000n]; // Pledges for d1, d2, d3
 
@@ -79,14 +89,10 @@ describe("DonorVoting", function () {
       await sgdCoin.connect(owner).mint(donor.address, pledgeAmount);
 
       // c) Donor approves DonorPledges contract
-      await sgdCoin
-        .connect(donor)
-        .approve(donorPledges.target, pledgeAmount);
+      await sgdCoin.connect(donor).approve(donorPledges.target, pledgeAmount);
 
       // d) Donor creates pledge
-      await donorPledges
-        .connect(donor)
-        .createPledge(eventId, pledgeAmount);
+      await donorPledges.connect(donor).createPledge(eventId, pledgeAmount);
     }
 
     // Helper function to advance time
@@ -134,15 +140,9 @@ describe("DonorVoting", function () {
       } = await loadFixture(deployVotingFixture);
 
       expect(await donorVoting.governance()).to.equal(governance.target);
-      expect(await donorVoting.donorRegistry()).to.equal(
-        donorRegistry.target
-      );
-      expect(await donorVoting.donorPledges()).to.equal(
-        donorPledges.target
-      );
-      expect(await donorVoting.donorRanking()).to.equal(
-        donorRanking.target
-      );
+      expect(await donorVoting.donorRegistry()).to.equal(donorRegistry.target);
+      expect(await donorVoting.donorPledges()).to.equal(donorPledges.target);
+      expect(await donorVoting.donorRanking()).to.equal(donorRanking.target);
       expect(await donorVoting.eventId()).to.equal(eventId);
     });
 
@@ -180,9 +180,7 @@ describe("DonorVoting", function () {
       const { commitTime, revealTime } = await getDeadlines();
 
       await expect(
-        donorVoting
-          .connect(oracle)
-          .adjustDeadline(commitTime, revealTime)
+        donorVoting.connect(oracle).adjustDeadline(commitTime, revealTime)
       )
         .to.emit(donorVoting, "DeadlinesAdjusted")
         .withArgs(commitTime, revealTime);
@@ -197,9 +195,7 @@ describe("DonorVoting", function () {
       );
       const { commitTime, revealTime } = await getDeadlines();
       await expect(
-        donorVoting
-          .connect(other)
-          .adjustDeadline(commitTime, revealTime)
+        donorVoting.connect(other).adjustDeadline(commitTime, revealTime)
       ).to.be.revertedWith("DonorVoting: Not oracle");
     });
 
@@ -209,9 +205,7 @@ describe("DonorVoting", function () {
       );
       const { commitTime, revealTime } = await getDeadlines();
       await expect(
-        donorVoting
-          .connect(oracle)
-          .adjustDeadline(revealTime, commitTime)
+        donorVoting.connect(oracle).adjustDeadline(revealTime, commitTime)
       ).to.be.revertedWith("DonorVoting: Commit < Reveal");
     });
 
@@ -240,9 +234,7 @@ describe("DonorVoting", function () {
         .withArgs(donor1.address, stream);
 
       expect(await donorVoting.isAssigned(donor1.address)).to.be.true;
-      expect(await donorVoting.assignedStream(donor1.address)).to.equal(
-        stream
-      );
+      expect(await donorVoting.assignedStream(donor1.address)).to.equal(stream);
       expect(await donorVoting.totalPossibleWeight(stream)).to.equal(
         finalWeight
       );
@@ -255,16 +247,10 @@ describe("DonorVoting", function () {
       const stream = 0;
       // donor1 pledge 1000, weight 100 -> 1000
       // donor2 pledge 2000, weight 100 -> 2000
-      await donorVoting
-        .connect(oracle)
-        .assignVoter(donor1.address, stream);
-      await donorVoting
-        .connect(oracle)
-        .assignVoter(donor2.address, stream);
+      await donorVoting.connect(oracle).assignVoter(donor1.address, stream);
+      await donorVoting.connect(oracle).assignVoter(donor2.address, stream);
 
-      expect(await donorVoting.totalPossibleWeight(stream)).to.equal(
-        3000n
-      );
+      expect(await donorVoting.totalPossibleWeight(stream)).to.equal(3000n);
     });
 
     it("2g) assignVoter: reverts for non-oracle", async () => {
@@ -305,12 +291,9 @@ describe("DonorVoting", function () {
     });
 
     it("2k) assignVoter: reverts if donor has no pledge", async () => {
-      const {
-        donorVoting,
-        oracle,
-        other,
-        donorRegistry,
-      } = await loadFixture(deployVotingFixture);
+      const { donorVoting, oracle, other, donorRegistry } = await loadFixture(
+        deployVotingFixture
+      );
       // 'other' is registered but has no pledge
       await donorRegistry.connect(other).registerDonor("Other", "cid");
       await expect(
@@ -318,11 +301,9 @@ describe("DonorVoting", function () {
       ).to.be.revertedWith("DonorVoting: No pledge weight");
     });
 
-    // advancePhase (from Pending) 
+    // advancePhase (from Pending)
     it("2l) advancePhase: reverts from Pending if deadlines not set", async () => {
-      const { donorVoting, oracle } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donorVoting, oracle } = await loadFixture(deployVotingFixture);
       await expect(
         donorVoting.connect(oracle).advancePhase()
       ).to.be.revertedWith("DonorVoting: Deadlines not set");
@@ -333,9 +314,7 @@ describe("DonorVoting", function () {
         deployVotingFixture
       );
       const { commitTime, revealTime } = await getDeadlines();
-      await donorVoting
-        .connect(oracle)
-        .adjustDeadline(commitTime, revealTime);
+      await donorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
 
       await expect(donorVoting.connect(oracle).advancePhase())
         .to.emit(donorVoting, "PhaseAdvanced")
@@ -360,9 +339,7 @@ describe("DonorVoting", function () {
       fixture = await loadFixture(deployVotingFixture);
       const { donorVoting, oracle, donor1, getDeadlines } = fixture;
       const { commitTime, revealTime } = await getDeadlines();
-      await donorVoting
-        .connect(oracle)
-        .adjustDeadline(commitTime, revealTime);
+      await donorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
       await donorVoting.connect(oracle).assignVoter(donor1.address, 0);
       await donorVoting.connect(oracle).advancePhase(); // -> Commit
     });
@@ -379,7 +356,8 @@ describe("DonorVoting", function () {
     });
 
     it("3b) commit: reverts if not in Commit phase", async () => {
-      const { donorVoting, donor1, oracle, advanceTime, getDeadlines } = fixture;
+      const { donorVoting, donor1, oracle, advanceTime, getDeadlines } =
+        fixture;
       const { commitTime } = await getDeadlines();
       // Advance to Reveal phase
       await advanceTime(101);
@@ -430,7 +408,6 @@ describe("DonorVoting", function () {
     });
   });
 
-
   // 4. Reveal Phase
   describe("4. Reveal Phase", function () {
     let fixture;
@@ -454,9 +431,7 @@ describe("DonorVoting", function () {
       const { donorVoting, oracle, donor1, getDeadlines } = fixture;
       const { commitTime, revealTime } = await getDeadlines();
 
-      await donorVoting
-        .connect(oracle)
-        .adjustDeadline(commitTime, revealTime);
+      await donorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
       await donorVoting.connect(oracle).assignVoter(donor1.address, 0); // 1000 pledge -> 1000 weight
       await donorVoting.connect(oracle).advancePhase(); // -> Commit
     });
@@ -594,22 +569,14 @@ describe("DonorVoting", function () {
   describe("5. Finalization Logic", function () {
     // Helper to run a full vote
     const runFullVote = async (assignments, votes) => {
-      const {
-        donorVoting,
-        oracle,
-        getDeadlines,
-        advanceTime,
-      } = await loadFixture(deployVotingFixture);
+      const { donorVoting, oracle, getDeadlines, advanceTime } =
+        await loadFixture(deployVotingFixture);
       const { commitTime, revealTime } = await getDeadlines();
-      await donorVoting
-        .connect(oracle)
-        .adjustDeadline(commitTime, revealTime);
+      await donorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
 
       // 1. Assign
       for (const { donor, stream } of assignments) {
-        await donorVoting
-          .connect(oracle)
-          .assignVoter(donor.address, stream);
+        await donorVoting.connect(oracle).assignVoter(donor.address, stream);
       }
       await donorVoting.connect(oracle).advancePhase(); // -> Commit
 
@@ -639,9 +606,7 @@ describe("DonorVoting", function () {
     };
 
     it("5a) Scenario: All streams pass (Quorum + Majority)", async () => {
-      const { donor1, donor2, donor3 } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
       // d1 weight 1000, d2 weight 2000, d3 weight 5000
       const assignments = [
         { donor: donor1, stream: 0 },
@@ -656,17 +621,14 @@ describe("DonorVoting", function () {
       const { donorVoting } = await runFullVote(assignments, votes);
 
       // Check results
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.true;
       expect(perStream).to.deep.equal([true, true, true]);
     });
 
     it("5b) Scenario: One stream fails (Quorum Failure)", async () => {
-      const { donor1, donor2, donor3 } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
       // d1 (1k) on S0, d2 (2k) on S1, d3 (5k) on S2
       // Quorum is 70%.
       // S0 total = 1000. Needs 700 participation.
@@ -688,17 +650,14 @@ describe("DonorVoting", function () {
       // S0: pass=1000, total=1000. Quorum: (1000*10000)/1000 = 10000 >= 7000. Pass.
       // S1: pass=2000, total=2000. Quorum: (2000*10000)/2000 = 10000 >= 7000. Pass.
       // S2: pass=0, total=0. Quorum: (0*10000)/5000 = 0 < 7000. Fail.
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false;
       expect(perStream).to.deep.equal([true, true, false]);
     });
 
     it("5c) Scenario: One stream fails (Pass Majority Failure)", async () => {
-      const { donor1, donor2, donor3 } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
       // d1 (1k), d2 (2k), d3 (5k) assigned to streams 0, 1, 2
       // All vote, so Quorum (70%) is met everywhere.
       // Pass Majority is 70%.
@@ -714,8 +673,7 @@ describe("DonorVoting", function () {
       ];
       const { donorVoting } = await runFullVote(assignments, votes);
 
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false; // Overall fails because S2 failed
       expect(perStream).to.deep.equal([true, true, false]); // S2 fails majority
@@ -742,8 +700,7 @@ describe("DonorVoting", function () {
       // Quorum: (3000*10000)/3000 = 10000 >= 7000. Pass.
       // Majority: (1000 > 2000) is false. Fail.
       // S1, S2: No one assigned. TotalPossible=0. Fail.
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false;
       expect(perStream).to.deep.equal([false, false, false]);
@@ -758,17 +715,14 @@ describe("DonorVoting", function () {
       // S0: pass=1000. Pass.
       // S1: totalPossible=0. Fail.
       // S2: totalPossible=0. Fail.
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false;
       expect(perStream).to.deep.equal([true, false, false]);
     });
 
     it("5f) Scenario: Quorum met, Pass Majority fails (below threshold)", async () => {
-      const { donor1, donor2, donor3 } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
       // d1 (1k) votes TRUE, d2 (2k) votes FALSE on Stream 0.
       // Quorum Bps = 70%, Pass Majority Bps = 70%
       // S0 Total Possible = 3000.
@@ -792,17 +746,14 @@ describe("DonorVoting", function () {
       // S1 & S2: totalPossibleWeight = 0 -> FAIL
 
       // --- Check Overall ---
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false; // Overall fails
       expect(perStream).to.deep.equal([false, false, false]); // S0 fails majority
     });
 
     it("5g) Scenario: Quorum fails, Pass Majority met", async () => {
-      const { donor1, donor2, donor3 } = await loadFixture(
-        deployVotingFixture
-      );
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
       // d1 (1k) votes TRUE on Stream 0. d2 (2k) also assigned but DOES NOT VOTE.
       // Quorum Bps = 70%, Pass Majority Bps = 70%
       // S0 Total Possible = 3000.
@@ -826,51 +777,47 @@ describe("DonorVoting", function () {
       // S1 & S2: totalPossibleWeight = 0 -> FAIL
 
       // --- Check Overall ---
-      const [decided, passed, perStream] =
-        await donorVoting.overallResult();
+      const [decided, passed, perStream] = await donorVoting.overallResult();
       expect(decided).to.be.true;
       expect(passed).to.be.false; // Overall fails
       expect(perStream).to.deep.equal([false, false, false]); // S0 fails quorum
     });
 
     it("5h) Scenario: Quorum met, Pass Majority met (exactly at threshold)", async () => {
-        const { donor1, donor2, donor3 } = await loadFixture(
-          deployVotingFixture
-        );
-        // d1 (1k) votes FALSE, d2 (2k) votes TRUE, d3 (7k, *mock*) votes TRUE on Stream 0.
-        // Need to simulate d3 having 7k weight. We'll use d1=3k, d2=7k instead for simplicity.
-        // Re-deploy fixture with modified weights/pledges is cleaner, but this uses existing donors:
-        // Let's use d1(1k), d2(2k), d3(5k).
-        // S0 Total Possible = 8000.
-        // Votes: d1=F (1k), d2=T (2k), d3=T (5k) => Total Weight = 8000. Pass Weight = 7000.
-        // Quorum Bps = 70%, Pass Majority Bps = 70%
-        const assignments = [
-          { donor: donor1, stream: 0 },
-          { donor: donor2, stream: 0 },
-          { donor: donor3, stream: 0 },
-          // S1, S2 have no assignments
-        ];
-        const votes = [
-          { donor: donor1, choice: false }, // Weight 1000
-          { donor: donor2, choice: true },  // Weight 2000
-          { donor: donor3, choice: true },  // Weight 5000
-        ];
-        const { donorVoting } = await runFullVote(assignments, votes);
+      const { donor1, donor2, donor3 } = await loadFixture(deployVotingFixture);
+      // d1 (1k) votes FALSE, d2 (2k) votes TRUE, d3 (7k, *mock*) votes TRUE on Stream 0.
+      // Need to simulate d3 having 7k weight. We'll use d1=3k, d2=7k instead for simplicity.
+      // Re-deploy fixture with modified weights/pledges is cleaner, but this uses existing donors:
+      // Let's use d1(1k), d2(2k), d3(5k).
+      // S0 Total Possible = 8000.
+      // Votes: d1=F (1k), d2=T (2k), d3=T (5k) => Total Weight = 8000. Pass Weight = 7000.
+      // Quorum Bps = 70%, Pass Majority Bps = 70%
+      const assignments = [
+        { donor: donor1, stream: 0 },
+        { donor: donor2, stream: 0 },
+        { donor: donor3, stream: 0 },
+        // S1, S2 have no assignments
+      ];
+      const votes = [
+        { donor: donor1, choice: false }, // Weight 1000
+        { donor: donor2, choice: true }, // Weight 2000
+        { donor: donor3, choice: true }, // Weight 5000
+      ];
+      const { donorVoting } = await runFullVote(assignments, votes);
 
-        // --- Check Tallies ---
-        // S0: pass=7000, fail=1000, totalWeight=8000.
-        // Quorum Check: participationBps = (8000 * 10000) / 8000 = 10000. >= 7000? YES.
-        // Pass Majority Check: passPercentageBps = (7000 * 10000) / 8000 = 8750. >= 7000? YES.
-        // S0 Result: PASS
+      // --- Check Tallies ---
+      // S0: pass=7000, fail=1000, totalWeight=8000.
+      // Quorum Check: participationBps = (8000 * 10000) / 8000 = 10000. >= 7000? YES.
+      // Pass Majority Check: passPercentageBps = (7000 * 10000) / 8000 = 8750. >= 7000? YES.
+      // S0 Result: PASS
 
-        // S1 & S2: totalPossibleWeight = 0 -> FAIL
+      // S1 & S2: totalPossibleWeight = 0 -> FAIL
 
-        // --- Check Overall ---
-        const [decided, passed, perStream] =
-          await donorVoting.overallResult();
-        expect(decided).to.be.true;
-        expect(passed).to.be.false; // Overall fails because S1, S2 failed
-        expect(perStream).to.deep.equal([true, false, false]); // S0 passes both
+      // --- Check Overall ---
+      const [decided, passed, perStream] = await donorVoting.overallResult();
+      expect(decided).to.be.true;
+      expect(passed).to.be.false; // Overall fails because S1, S2 failed
+      expect(perStream).to.deep.equal([true, false, false]); // S0 passes both
     });
   });
 });
