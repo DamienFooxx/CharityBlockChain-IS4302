@@ -18,12 +18,12 @@ import "./CharityRegistry.sol";
 contract CharityEvent is Registry {
     // --- Enums ---
     enum EventPhase {
-        FUNDING,
+        FUNDING, //0
         CLOSED,
         VERIFICATION,
         APPROVED,
         COMPLETED,
-        REJECTED,
+        REJECTED, //5
         CANCELLED
     }
 

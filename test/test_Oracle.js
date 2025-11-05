@@ -31,7 +31,7 @@ describe("Oracle", function () {
       oracle.address,
       owner.address,
       QUORUM_BPS, // 70% quorum
-      PASS_MAJORITY_BPS, 
+      PASS_MAJORITY_BPS
     );
     await governance.waitForDeployment();
 
@@ -41,11 +41,16 @@ describe("Oracle", function () {
 
     const EscrowVault = await ethers.getContractFactory("EscrowVault");
     // Deploy EscrowVault with governance and token addresses (constructor requires both)
-    const escrowVault = await EscrowVault.deploy(governance.target, sgdCoin.target);
+    const escrowVault = await EscrowVault.deploy(
+      governance.target,
+      sgdCoin.target
+    );
     await escrowVault.waitForDeployment();
 
     // --- Register EscrowVault with Governance ---
-    await governance.connect(owner).setContractAddress("EscrowVault", escrowVault.target);
+    await governance
+      .connect(owner)
+      .setContractAddress("EscrowVault", escrowVault.target);
 
     // --- Deploy Registries ---
     const DonorRegistry = await ethers.getContractFactory("DonorRegistry");
@@ -67,7 +72,9 @@ describe("Oracle", function () {
     await donorPledges.waitForDeployment();
 
     // Authorize DonorPledges in the EscrowVault so depositPledge can be called
-    await escrowVault.connect(owner).authorizeContract(donorPledges.target, true);
+    await escrowVault
+      .connect(owner)
+      .authorizeContract(donorPledges.target, true);
 
     const DonorRanking = await ethers.getContractFactory("DonorRanking");
     const donorRanking = await DonorRanking.deploy(governance.target);
@@ -116,10 +123,7 @@ describe("Oracle", function () {
 
     await governance
       .connect(owner)
-      .grantRole(
-        await governance.ORACLE_ROLE(),
-        oracleContract.target
-      );
+      .grantRole(await governance.ORACLE_ROLE(), oracleContract.target);
 
     // --- Final Setup: Register participants ---
     const donors = [donor1, donor2, donor3];
@@ -128,16 +132,10 @@ describe("Oracle", function () {
     for (let i = 0; i < donors.length; i++) {
       const donor = donors[i];
       const pledgeAmount = pledges[i];
-      await donorRegistry
-        .connect(donor)
-        .registerDonor(`Donor ${i + 1}`, "cid");
+      await donorRegistry.connect(donor).registerDonor(`Donor ${i + 1}`, "cid");
       await sgdCoin.connect(owner).mint(donor.address, pledgeAmount);
-      await sgdCoin
-        .connect(donor)
-        .approve(donorPledges.target, pledgeAmount);
-      await donorPledges
-        .connect(donor)
-        .createPledge(eventId, pledgeAmount);
+      await sgdCoin.connect(donor).approve(donorPledges.target, pledgeAmount);
+      await donorPledges.connect(donor).createPledge(eventId, pledgeAmount);
     }
 
     // Register Attestor1
@@ -166,13 +164,7 @@ describe("Oracle", function () {
       const { commitTime, revealTime } = await getDeadlines();
       await oracleContract
         .connect(oracle)
-        .setDeadlines(
-          eventId,
-          commitTime,
-          revealTime,
-          commitTime,
-          revealTime
-        );
+        .setDeadlines(eventId, commitTime, revealTime, commitTime, revealTime);
 
       // Assign all 3 donors to 3 different streams
       await oracleContract
@@ -217,7 +209,7 @@ describe("Oracle", function () {
       expect(passed).to.equal(didPass);
     };
 
-return {
+    return {
       oracleContract,
       governance,
       donorVoting,
@@ -357,8 +349,9 @@ return {
     }
 
     it("3a) assignVoter: correctly calls DonorVoting module", async () => {
-      const { oracleContract, oracle, donor1, donorVoting } =
-        await loadFixture(fixtureWithModules);
+      const { oracleContract, oracle, donor1, donorVoting } = await loadFixture(
+        fixtureWithModules
+      );
 
       await oracleContract
         .connect(oracle)
@@ -383,8 +376,9 @@ return {
     });
 
     it("3c) assignVoterDeterministic: assigns correctly", async () => {
-      const { oracleContract, oracle, donor1, donorVoting } =
-        await loadFixture(fixtureWithModules);
+      const { oracleContract, oracle, donor1, donorVoting } = await loadFixture(
+        fixtureWithModules
+      );
 
       // hash(seed, eventId, donor1) % 3
       const expectedStream =
@@ -418,13 +412,7 @@ return {
       const { commitTime, revealTime } = await getDeadlines();
       await oracleContract
         .connect(oracle)
-        .setDeadlines(
-          eventId,
-          commitTime,
-          revealTime,
-          commitTime,
-          revealTime
-        );
+        .setDeadlines(eventId, commitTime, revealTime, commitTime, revealTime);
 
       expect(await donorVoting.phase()).to.equal(0); // Pending
       expect(await attestorVoting.phase()).to.equal(0); // Pending
@@ -461,7 +449,7 @@ return {
       return fixture;
     }
 
-it("4a) disburseIfVerified: SUCCESS path", async () => {
+    it("4a) disburseIfVerified: SUCCESS path", async () => {
       const fixture = await loadFixture(fixtureWithModules);
       const {
         oracleContract,
@@ -493,21 +481,19 @@ it("4a) disburseIfVerified: SUCCESS path", async () => {
 
       // 5. Call disburse
       // This will now call setVerified() on the CharityEvent, which is in the correct VERIFICATION phase
-      await expect(
-        oracleContract.connect(oracle).disburseIfVerified(eventId)
-      )
+      await expect(oracleContract.connect(oracle).disburseIfVerified(eventId))
         .to.emit(oracleContract, "Disbursed")
         .withArgs(eventId, beneficiary.address);
 
       // 6. Check effects
       expect(await charityEvent.verified()).to.be.true;
-      expect(await charityEvent.phase()).to.equal(3); // 3 = EventPhase.APPROVED
+      expect(await charityEvent.phase()).to.equal(4); // 3 = EventPhase.COMPLETED for event finish and fund disbursemnet
       expect(await escrowVault.released(eventId)).to.be.true;
       expect(await escrowVault.releaseRecipient(eventId)).to.equal(
         beneficiary.address
       );
     });
-    
+
     it("4b) disburseIfVerified: FAIL path (reverts)", async () => {
       const fixture = await loadFixture(fixtureWithModules);
       const {
@@ -586,9 +572,17 @@ it("4a) disburseIfVerified: SUCCESS path", async () => {
     });
 
     it("5b) startRetry: successfully starts a new round", async () => {
-      const { oracleContract, oracle, getDeadlines, donorRegistry, donorPledges, donorRanking, attestorRegistry, sgdCoin } =
-        await loadFixture(fixtureWithFailedVote);
-      
+      const {
+        oracleContract,
+        oracle,
+        getDeadlines,
+        donorRegistry,
+        donorPledges,
+        donorRanking,
+        attestorRegistry,
+        sgdCoin,
+      } = await loadFixture(fixtureWithFailedVote);
+
       const oldModules = await oracleContract.modules(eventId);
       const oldSeed = await oracleContract.voterAssignmentSeed();
 
@@ -609,19 +603,21 @@ it("4a) disburseIfVerified: SUCCESS path", async () => {
         sgdCoin.target,
         attestorRegistry.target
       );
-      
+
       const { commitTime, revealTime } = await getDeadlines();
 
       await expect(
-        oracleContract.connect(oracle).startRetry(
-          eventId,
-          newDonorVoting.target,
-          newAttestorVoting.target,
-          commitTime,
-          revealTime,
-          commitTime,
-          revealTime
-        )
+        oracleContract
+          .connect(oracle)
+          .startRetry(
+            eventId,
+            newDonorVoting.target,
+            newAttestorVoting.target,
+            commitTime,
+            revealTime,
+            commitTime,
+            revealTime
+          )
       ).to.emit(oracleContract, "RetryStarted");
 
       // Check effects
@@ -629,7 +625,7 @@ it("4a) disburseIfVerified: SUCCESS path", async () => {
       expect(newModules.donor).to.equal(newDonorVoting.target);
       expect(newModules.attestor).to.equal(newAttestorVoting.target);
       expect(newModules.donor).to.not.equal(oldModules.donor);
-      
+
       expect(await oracleContract.currentRound(eventId)).to.equal(1);
       expect(await oracleContract.voterAssignmentSeed()).to.not.equal(oldSeed);
       expect(await newDonorVoting.commitDeadline()).to.equal(commitTime);
