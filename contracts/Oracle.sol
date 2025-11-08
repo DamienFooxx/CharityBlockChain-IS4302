@@ -6,6 +6,7 @@ import "./AttestorVoting.sol";
 import "./DonorVoting.sol";
 import "./EscrowVault.sol";
 import "./CharityEvent.sol";
+import "./CharityTreasury.sol";
 
 contract Oracle {
     Governance public immutable governance;
@@ -425,12 +426,22 @@ contract Oracle {
         require(escrow != address(0), "OracleAstraea: EscrowVault not set");
 
         address beneficiary = address(0);
+        uint256 orgId = 0; // <-- ADDED
         if (modules[eventId].charity != address(0)) {
             beneficiary = CharityEvent(modules[eventId].charity).beneficiary();
+            orgId = CharityEvent(modules[eventId].charity).orgId(); // <-- ADDED
         }
-        EscrowVault(escrow).releaseToVerifiedBeneficiary(eventId, beneficiary);
+        
+        // 1. PUSH funds from EscrowVault to Treasury
+        uint256 totalReleased = EscrowVault(escrow).releaseToVerifiedBeneficiary(eventId, beneficiary); // <-- CAPTURE return value
+
+        // 2. CONFIRM funds in Treasury to update internal ledger
+        require(totalReleased > 0, "OracleAstraea: Escrow released no funds");
+        require(orgId > 0, "OracleAstraea: Invalid orgId");
+        CharityTreasury(beneficiary).confirmFundsReceived(orgId, eventId, totalReleased); // <-- ADDED CALL
 
         emit Disbursed(eventId, beneficiary);
+        
         // Mark event as completed after successful disbursement
         if (modules[eventId].charity != address(0)) {
             CharityEvent(modules[eventId].charity).markCompleted();

@@ -29,7 +29,7 @@ contract CharityTreasury {
     
     // Event-specific balance tracking
     struct EventBalance {
-        uint256 eventId;
+        bytes32 eventId;
         uint256 amount;
         bool released;
         uint256 releaseTime;
@@ -37,15 +37,15 @@ contract CharityTreasury {
     
     // Mappings
     mapping(uint256 => TreasuryData) public treasuries; // orgId => treasury data
-    mapping(uint256 => mapping(uint256 => EventBalance)) public eventBalances; // orgId => eventId => balance
+    mapping(uint256 => mapping(bytes32 => EventBalance)) public eventBalances; // orgId => eventId => balance
     mapping(address => uint256) public addressToOrgId; // address => orgId
     
     // Events
     event TreasuryCreated(uint256 indexed orgId, address owner);
-    event FundsReceived(uint256 indexed orgId, uint256 amount, uint256 eventId);
-    event FundsReleased(uint256 indexed orgId, uint256 eventId, uint256 amount);
+    event FundsReceived(uint256 indexed orgId, uint256 amount, bytes32 eventId);
+    event FundsReleased(uint256 indexed orgId, bytes32 eventId, uint256 amount);
     event FundsWithdrawn(uint256 indexed orgId, address to, uint256 amount);
-    event DisbursementRequested(uint256 indexed orgId, uint256 eventId, uint256 amount);
+    event DisbursementRequested(uint256 indexed orgId, bytes32 eventId, uint256 amount);
     event TreasuryDeactivated(uint256 indexed orgId);
     
     // Modifiers
@@ -134,7 +134,7 @@ contract CharityTreasury {
      * @param eventId The event ID
      * @param amount The amount to receive
      */
-    function receiveRelease(uint256 orgId, uint256 eventId, uint256 amount) 
+    function receiveRelease(uint256 orgId, bytes32 eventId, uint256 amount) 
         external 
         onlyOracle 
         treasuryExists(orgId) 
@@ -162,13 +162,54 @@ contract CharityTreasury {
         
         emit FundsReceived(orgId, amount, eventId);
     }
+
+    /**
+     * @dev (Oracle) Confirms funds have been received from Escrow, updating internal balance.
+     * This is called by the Oracle *after* EscrowVault has pushed tokens to this contract.
+     */
+    function confirmFundsReceived(
+        uint256 orgId,
+        bytes32 eventId,
+        uint256 amount
+    )
+        external
+        onlyOracle
+        treasuryExists(orgId)
+        treasuryActive(orgId)
+    {
+        require(amount > 0, "Amount must be positive");
+        require(eventBalances[orgId][eventId].amount == 0, "Event already recorded");
+
+        // Check that the tokens are *actually* here.
+        // This is a sanity check.
+        require(
+            stablecoin.balanceOf(address(this)) >= treasuries[orgId].totalBalance + amount,
+            "Treasury balance mismatch"
+        );
+
+        // Update treasury balances
+        TreasuryData storage treasury = treasuries[orgId];
+        treasury.totalBalance += amount;
+        treasury.availableBalance += amount;
+        treasury.lastActivity = block.timestamp;
+
+        // Record event balance
+        eventBalances[orgId][eventId] = EventBalance({
+            eventId: eventId,
+            amount: amount,
+            released: false, // 'released' here means processed by 'releaseEventFunds', not received
+            releaseTime: block.timestamp
+        });
+
+        emit FundsReceived(orgId, amount, eventId);
+    }
     
     /**
      * @dev Request disbursement for an event
      * @param eventId The event ID
      * @param amount The amount to disburse
      */
-    function requestDisbursement(uint256 eventId, uint256 amount) 
+    function requestDisbursement(bytes32 eventId, uint256 amount) 
         external 
         treasuryExists(addressToOrgId[msg.sender]) 
         treasuryActive(addressToOrgId[msg.sender]) 
@@ -222,7 +263,7 @@ contract CharityTreasury {
      * @param eventId The event ID
      * @param approved Whether the event was approved
      */
-    function releaseEventFunds(uint256 orgId, uint256 eventId, bool approved) 
+    function releaseEventFunds(uint256 orgId, bytes32 eventId, bool approved) 
         external 
         onlyOracle 
         treasuryExists(orgId) 

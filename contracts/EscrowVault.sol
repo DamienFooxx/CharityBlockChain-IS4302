@@ -122,7 +122,7 @@ contract EscrowVault is Registry {
     function releaseToVerifiedBeneficiary(
         bytes32 eventId,
         address to
-    ) external whenNotPaused {
+    ) external whenNotPaused returns (uint256 total) {
         // allow Oracle role OR authorized contracts to call
         if (!authorizedContracts[msg.sender]) {
             require(
@@ -155,5 +155,7 @@ contract EscrowVault is Registry {
 
         require(sgdToken.transfer(to, total), "EscrowVault: transfer failed");
         emit EventReleased(eventId, to, total);
+
+        return total;
     }
 }
