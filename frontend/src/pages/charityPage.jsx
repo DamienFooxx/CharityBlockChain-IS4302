@@ -88,36 +88,12 @@ export default function CharityPage() {
         const accounts = await provider.send("eth_accounts", []);
         if (!accounts || accounts.length <= 12) throw new Error("No local account index 12 available to send txs");
       }
-
-      // Try to use the local RPC signer (account index 12). If the local node is not running
-      // or doesn't expose unlocked accounts, fall back to MetaMask (BrowserProvider) if available.
-      let signer = provider.getSigner(charityAddr || 12);
-      let signerOk = true;
-      try {
-        // this will fail if the signer cannot provide an address / send txs
-        await signer.getAddress();
-      } catch (err) {
-        signerOk = false;
-      }
-
-      if (!signerOk) {
-        if (typeof window !== "undefined" && window.ethereum) {
-          setStatus("Local RPC signer not available — falling back to MetaMask. Please approve the request in MetaMask.");
-          const browserProvider = new ethers.BrowserProvider(window.ethereum);
-          await browserProvider.send("eth_requestAccounts", []);
-          signer = await browserProvider.getSigner();
-        } else {
-          throw new Error(
-            "No signer available: start a local Hardhat node (npx hardhat node) or connect MetaMask in the browser."
-          );
-        }
-      }
-
-      const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, signer);
-      // Contract has two overloads for registerCharity: registerCharity(string,string) for
-      // self-registration (name + metaCID) and registerCharity(address,string) for admin-led
-      // registration. Use the fully-qualified signature to disambiguate.
-      const tx = await registry["registerCharity(string,string)"](name, metaCID);
+  const signer = provider.getSigner(charityAddr || 12);
+  const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, signer);
+  // Contract has two overloads for registerCharity: registerCharity(string,string) for
+  // self-registration (name + metaCID) and registerCharity(address,string) for admin-led
+  // registration. Use the fully-qualified signature to disambiguate.
+  const tx = await registry["registerCharity(string,string)"](name, metaCID);
       setStatus("Tx sent: " + tx.hash);
       await tx.wait();
       setStatus("Registration confirmed");

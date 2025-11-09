@@ -13,11 +13,30 @@ export default function DonorPage() {
   const [connected, setConnected] = useState(null); // connected metamask address
   const [status, setStatus] = useState("");
   const [events, setEvents] = useState([]);
+  const [demoWallets, setDemoWallets] = useState(null);
+  const [mintedTotal, setMintedTotal] = useState("0");
 
   const rpcUrl = "http://127.0.0.1:8545";
 
   useEffect(() => {
     refreshAll();
+    // require explicit accountPrivateKey.json (local, ignored by git)
+    (async () => {
+      try {
+        const mod = await import('../config/accountPrivateKey.json');
+        const keys = mod.default || mod;
+        if (!Array.isArray(keys) || keys.length === 0) {
+          throw new Error('frontend/src/config/accountPrivateKey.json is empty or invalid');
+        }
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const wallets = keys.map((pk) => new ethers.Wallet(pk, provider));
+        setDemoWallets(wallets);
+        setStatus((s) => (s ? s + ' | Demo keys loaded' : 'Demo keys loaded'));
+      } catch (e) {
+
+        throw new Error('Missing required file: frontend/src/config/accountPrivateKey.json — copy accountPrivateKey.json.example and populate with private keys');
+      }
+    })();
   }, []);
 
   // Attach event listeners for Transfer, Mint and optionally Minted
@@ -45,6 +64,22 @@ export default function DonorPage() {
         }
       })();
       pushEvent({ id: Date.now() + Math.random(), type: "Transfer", from, to, amount, tx: event.transactionHash });
+      // If this is a mint (from zero address), refresh the total minted counter
+      try {
+        if (from && from.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+          // fetch totalSupply and update
+          sgd.totalSupply()
+            .then((ts) => {
+              try {
+                const human = ethers.formatUnits(ts, decimalsNum);
+                setMintedTotal(human);
+              } catch (e) {
+                setMintedTotal(ts.toString());
+              }
+            })
+            .catch(() => {});
+        }
+      } catch (e) {}
     };
 
     const onMint = (to, amount, event) => {
@@ -129,6 +164,21 @@ export default function DonorPage() {
       }
 
       setAccounts(list);
+      // update total minted counter
+      try {
+        const provider2 = new ethers.JsonRpcProvider(rpcUrl);
+        const sgd2 = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, provider2);
+        const total = await sgd2.totalSupply().catch(() => 0n);
+        const decimals = await sgd2.decimals().catch(() => 18);
+        const decimalsNum = typeof decimals === "bigint" ? Number(decimals) : decimals;
+        try {
+          setMintedTotal(ethers.formatUnits(total, decimalsNum));
+        } catch (e) {
+          setMintedTotal(total.toString());
+        }
+      } catch (e) {
+        // ignore
+      }
       setStatus("");
     } catch (e) {
       setStatus("Failed to load accounts: " + (e.message || e));
@@ -155,30 +205,37 @@ export default function DonorPage() {
     }
   }
 
-  // Mint a fixed amount (100) to a target account using connected signer (MetaMask)
+  // Mint a fixed amount (100) to a target account using the local owner wallet (account 0)
   async function mintTo(targetAddress, amount = "100") {
-    if (!window.ethereum) {
-      setStatus("MetaMask not found");
-      return;
-    }
-    setStatus("Sending mint tx...");
+    setStatus("Sending mint tx from owner (account 0)...");
     try {
-      const browserProvider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await browserProvider.getSigner();
-      const signerAddr = await signer.getAddress();
-      // Create contract connected to signer
-      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, signer);
+      if (!demoWallets || demoWallets.length === 0) {
+        throw new Error('No local account private keys loaded; ensure frontend/src/config/accountPrivateKey.json exists and contains keys');
+      }
 
-      // Convert human amount to token units (assume 18 decimals)
+      const ownerWallet = demoWallets[0];
+      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, ownerWallet);
+
+      // Verify owner (if contract exposes owner())
+      let ownerAddr = null;
+      try { ownerAddr = await sgd.owner(); } catch (e) { /* ignore if not present */ }
+      const signerAddr = await ownerWallet.getAddress();
+      if (ownerAddr && ownerAddr.toLowerCase() !== signerAddr.toLowerCase()) {
+        throw new Error(`Local wallet[0] (${signerAddr}) is not the SGDCoin owner (${ownerAddr}). Ensure you used the same mnemonic as the deployer`);
+      }
+
+      // Convert human amount to token units
       const decimals = await sgd.decimals().catch(() => 18);
-      const amountWei = ethers.parseUnits(amount.toString(), decimals);
+      const decimalsNum = typeof decimals === "bigint" ? Number(decimals) : decimals;
+      const amountWei = ethers.parseUnits(amount.toString(), decimalsNum);
 
+      // Owner mints directly to targetAddress
       const tx = await sgd.mint(targetAddress, amountWei);
-      setStatus("Mint transaction sent: " + tx.hash);
+      setStatus("Mint transaction sent (owner -> target): " + tx.hash);
       await tx.wait();
       setStatus("Mint confirmed. Refreshing balances...");
       await refreshAll();
-      setStatus("Mint completed");
+      setStatus(`Mint completed by owner Account 0 ${short(signerAddr)} to ${short(targetAddress)} (${amount} tokens)`);
     } catch (e) {
       setStatus("Mint failed: " + (e.message || e));
     }
@@ -191,20 +248,29 @@ export default function DonorPage() {
       if (!accounts || accounts.length === 0) {
         await refreshAll();
       }
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const signer0 = provider.getSigner(0);
-      let signer0Addr;
-      try {
-        signer0Addr = await signer0.getAddress();
-      } catch (err) {
-        throw new Error("RPC signer 0 is not available — ensure local node is running and unlocked (npx hardhat node)");
+      // Prefer demo wallet[0] (developer mode) otherwise try RPC signer 0
+      let signerForMint = null;
+      if (demoWallets && demoWallets.length > 0) {
+        signerForMint = demoWallets[0];
+      } else {
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const signer0 = provider.getSigner(0);
+        try {
+          await signer0.getAddress();
+          signerForMint = signer0;
+        } catch (err) {
+          throw new Error("No available signer for mintToAll: ensure demoKeys exist or local node exposes unlocked account 0");
+        }
       }
 
-      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, signer0);
+      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, signerForMint);
       let ownerAddr = null;
       try { ownerAddr = await sgd.owner(); } catch (e) {}
-      if (ownerAddr && ownerAddr.toLowerCase() !== signer0Addr.toLowerCase()) {
-        throw new Error(`Node signer 0 (${signer0Addr}) is not the SGDCoin owner (${ownerAddr}). Only owner can call mint().`);
+      if (ownerAddr) {
+        const signerAddr = await signerForMint.getAddress();
+        if (ownerAddr.toLowerCase() !== signerAddr.toLowerCase()) {
+          throw new Error(`Signer is not SGDCoin owner (${ownerAddr}). Only owner can call mint().`);
+        }
       }
 
       const decimals = await sgd.decimals().catch(() => 18);
@@ -229,6 +295,7 @@ export default function DonorPage() {
   return (
     <div style={{ padding: 20 }}>
       <h2>Node Accounts (first 10)</h2>
+      <div style={{ marginBottom: 8 }}>Total SGDCoin minted: <strong>{mintedTotal}</strong></div>
       <div style={{ marginBottom: 10 }}>
         <button onClick={refreshAll} disabled={loading}>
           Refresh
@@ -240,9 +307,6 @@ export default function DonorPage() {
         >
           Mint 1000 SGD to all (from node account 0)
         </button> */}
-        <button onClick={connectWallet} style={{ marginLeft: 8 }}>
-          Connect MetaMask
-        </button>
         <span style={{ marginLeft: 12 }}>{status}</span>
       </div>
 
@@ -256,7 +320,7 @@ export default function DonorPage() {
                 <div style={{ marginTop: 8 }}>SGD Balance: {acct.balance}</div>
                 <div style={{ marginTop: 8 }}>
                   <button onClick={() => mintTo(acct.address, 100)}>
-                    Mint 100 SGD to this account (from connected wallet)
+                    Mint 100 SGD to this account (owner mint)
                   </button>
                 </div>
               </div>
