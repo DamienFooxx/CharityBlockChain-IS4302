@@ -3,11 +3,13 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import addresses from "./config/addresses.json";
 import DonorPage from "./pages/donorPage";
+import CharityPage from "./pages/charityPage";
 
 
 function App() {
   const [account, setAccount] = useState(null);
   const [showDonor, setShowDonor] = useState(false);
+  const [showCharity, setShowCharity] = useState(false);
 
   useEffect(() => {
     console.log("Loaded contract addresses:", addresses);
@@ -35,15 +37,20 @@ function App() {
           <button style={{ marginLeft: 8 }} onClick={() => setShowDonor((s) => !s)}>
             {showDonor ? "Close Donor Page" : "Open Donor Page"}
           </button>
+          <button style={{ marginLeft: 8 }} onClick={() => setShowCharity((s) => !s)}>
+            {showCharity ? "Close Charity Page" : "Open Charity Page"}
+          </button>
         </div>
       </header>
 
       <main style={{ marginTop: 16 }}>
         {showDonor ? (
           <DonorPage />
+        ) : showCharity ? (
+          <CharityPage />
         ) : (
           <div>
-            <p>Use the "Open Donor Page" button to view node accounts and token minting helper.</p>
+            <p>Use the "Open Donor Page" or "Open Charity Page" button to view helpers.</p>
           </div>
         )}
       </main>

@@ -58,25 +58,13 @@ export default function DonorPage() {
       pushEvent({ id: Date.now() + Math.random(), type: "Mint", to, amount: amt, tx: event.transactionHash });
     };
 
-    const onMinted = (operator, to, amount, reason, event) => {
-      const amt = (() => {
-        try {
-          return ethers.formatUnits(amount, decimalsNum);
-        } catch (e) {
-          return amount.toString();
-        }
-      })();
-      pushEvent({ id: Date.now() + Math.random(), type: "Minted", operator, to, amount: amt, reason, tx: event.transactionHash });
-    };
 
     try { sgd.on("Transfer", onTransfer); } catch (e) {}
     try { sgd.on("Mint", onMint); } catch (e) {}
-    try { sgd.on("Minted", onMinted); } catch (e) {}
 
     return () => {
       try { sgd.off("Transfer", onTransfer); } catch (e) {}
       try { sgd.off("Mint", onMint); } catch (e) {}
-      try { sgd.off("Minted", onMinted); } catch (e) {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -307,15 +295,7 @@ export default function DonorPage() {
                       <div style={{ fontSize: 11, color: "#666" }}>tx: {ev.tx}</div>
                     </div>
                   )}
-                  {ev.type === "Minted" && (
-                    <div style={{ fontSize: 13 }}>
-                      <div>operator: <span style={{ fontFamily: "monospace" }}>{ev.operator}</span></div>
-                      <div>to: <span style={{ fontFamily: "monospace" }}>{ev.to}</span></div>
-                      <div>amount: {ev.amount}</div>
-                      <div>reason: {ev.reason}</div>
-                      <div style={{ fontSize: 11, color: "#666" }}>tx: {ev.tx}</div>
-                    </div>
-                  )}
+                  {/* Minted events removed — contract emits Mint and Transfer only */}
                 </div>
               ))
             )}
