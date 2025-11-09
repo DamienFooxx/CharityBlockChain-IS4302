@@ -2,9 +2,11 @@ import React, { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import addresses from "../config/addresses.json";
 import CharityRegistryArtifact from "../abi/CharityRegistry.json";
+import { getWallets } from "../utils/wallets";
 
 export default function CharityPage() {
   const [charityAddr, setCharityAddr] = useState(null);
+  const [accountWallets, setAccountWallets] = useState(null);
   const [orgId, setOrgId] = useState(0);
   const [profile, setProfile] = useState(null);
   const [status, setStatus] = useState("");
@@ -24,16 +26,17 @@ export default function CharityPage() {
   async function loadCharityAccount() {
     setStatus("Loading charity account (index 12)...");
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const accounts = await provider.send("eth_accounts", []);
-      if (!accounts || accounts.length <= 12) {
-        setStatus("Local node does not expose account index 12. Found " + (accounts ? accounts.length : 0) + " accounts.");
+      // Load wallets from local private key file using helper
+      const wallets = await getWallets(rpcUrl);
+      if (!Array.isArray(wallets) || wallets.length <= 12) {
+        setStatus('accountPrivateKey.json missing or does not contain at least 13 keys (index 0..12)');
         setCharityAddr(null);
         return;
       }
-      const addr = accounts[12];
+      setAccountWallets(wallets);
+      const addr = await wallets[12].getAddress();
       setCharityAddr(addr);
-      setStatus("Loaded charity address: " + addr);
+      setStatus('Loaded charity address from local keys: ' + addr);
       await refreshProfile(addr);
       await loadRegistrySummary();
     } catch (e) {
@@ -82,18 +85,22 @@ export default function CharityPage() {
   async function registerCharity() {
     setStatus("Registering charity...");
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      if (!charityAddr) {
-        // try to load accounts if charityAddr is missing
-        const accounts = await provider.send("eth_accounts", []);
-        if (!accounts || accounts.length <= 12) throw new Error("No local account index 12 available to send txs");
+      
+      let signer;
+      if (accountWallets && accountWallets[12]) {
+        signer = accountWallets[12];
+      } else {
+        // Fallback: try to construct wallets from the local file (helper will throw if missing)
+        const wallets = await getWallets(rpcUrl);
+        if (!wallets || !wallets[12]) throw new Error('No local wallet at index 12 available to send txs');
+        signer = wallets[12];
       }
-  const signer = provider.getSigner(charityAddr || 12);
-  const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, signer);
-  // Contract has two overloads for registerCharity: registerCharity(string,string) for
-  // self-registration (name + metaCID) and registerCharity(address,string) for admin-led
-  // registration. Use the fully-qualified signature to disambiguate.
-  const tx = await registry["registerCharity(string,string)"](name, metaCID);
+
+      const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, signer);
+      // Contract has two overloads for registerCharity: registerCharity(string,string) for
+      // self-registration (name + metaCID) and registerCharity(address,string) for admin-led
+      // registration. Use the fully-qualified signature to disambiguate.
+      const tx = await registry["registerCharity(string,string)"](name, metaCID);
       setStatus("Tx sent: " + tx.hash);
       await tx.wait();
       setStatus("Registration confirmed");
