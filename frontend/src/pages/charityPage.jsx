@@ -12,6 +12,7 @@ export default function CharityPage() {
   const [status, setStatus] = useState("");
   const [registryList, setRegistryList] = useState([]);
   const [events, setEvents] = useState([]);
+  const [treasuryOwner, setTreasuryOwner] = useState(null);
   const rpcUrl = "http://127.0.0.1:8545";
 
   // form
@@ -53,11 +54,49 @@ export default function CharityPage() {
       if (Number(org) !== 0) {
         const p = await registry.getCharity(wallet);
         setProfile({ name: p.name, metaCID: p.metaCID, approved: p.approved, treasury: p.treasury, registrant: p.registrant });
+        // check treasury creation status and owner
+        try {
+          if (p.treasury && p.treasury !== ethers.ZeroAddress) {
+            const treasuryViewAbi = [
+              "function treasuries(uint256) view returns (uint256,uint256,uint256,uint256,address,bool,uint256)"
+            ];
+            const tv = new ethers.Contract(p.treasury, treasuryViewAbi, provider);
+            const data = await tv.treasuries(BigInt(org));
+            const ownerAddr = data[4];
+            setTreasuryOwner(ownerAddr && ownerAddr !== ethers.ZeroAddress ? ownerAddr : null);
+          } else {
+            setTreasuryOwner(null);
+          }
+        } catch (e) {
+          // ignore view errors
+          setTreasuryOwner(null);
+        }
       } else {
         setProfile(null);
       }
     } catch (e) {
       setStatus("Failed to read profile: " + (e.message || e));
+    }
+  }
+
+  async function createOwnTreasury() {
+    if (!profile || !profile.treasury || profile.treasury === ethers.ZeroAddress) return setStatus('No treasury contract assigned by admin yet');
+    if (!accountWallets || !accountWallets[12]) return setStatus('Charity wallet not loaded');
+    if (treasuryCreated) return setStatus('Treasury already created');
+    try {
+      setStatus('Creating treasury for org ' + orgId + '...');
+      const signer = accountWallets[12];
+      const treasuryAbi = [{ "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" }], "name": "createTreasury", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
+        "function treasuries(uint256) view returns (uint256,uint256,uint256,uint256,address,bool,uint256)"];
+      const contract = new ethers.Contract(profile.treasury, treasuryAbi, signer);
+      const tx = await contract.createTreasury(BigInt(orgId), await signer.getAddress());
+      setStatus('Tx sent: ' + tx.hash);
+      await tx.wait();
+      setStatus('Treasury creation confirmed');
+      setTreasuryCreated(true);
+      await loadRegistrySummary();
+    } catch (e) {
+      setStatus('createTreasury failed: ' + (e.message || e));
     }
   }
 
@@ -163,7 +202,8 @@ export default function CharityPage() {
                 <div><strong>Name:</strong> {profile.name}</div>
                 <div><strong>metaCID:</strong> {profile.metaCID}</div>
                 <div><strong>approved:</strong> {String(profile.approved)}</div>
-                <div><strong>treasury:</strong> {profile.treasury}</div>
+                <div><strong>treasury (contract):</strong> {profile.treasury || 'none'}</div>
+                <div><strong>treasury (account):</strong> {treasuryOwner || 'not created'}</div>
               </div>
             ) : (
               <div style={{ marginTop: 8, color: '#666' }}>Charity not registered yet.</div>
@@ -180,6 +220,37 @@ export default function CharityPage() {
                 <button style={{ marginLeft: 8 }} onClick={() => refreshProfile(charityAddr)}>Refresh Profile</button>
               </div>
             </div>
+          </section>
+
+          <section style={{ marginBottom: 12 }}>
+            <h3>Treasury</h3>
+            {profile ? (
+              <div style={{ maxWidth: 600 }}>
+                <div>Assigned treasury contract: <code>{profile.treasury || 'none'}</code></div>
+                <div style={{ marginTop: 8 }}>OrgId: {orgId}</div>
+                <div style={{ marginTop: 8 }}>
+                  {profile.treasury && profile.treasury !== ethers.ZeroAddress ? (
+                    treasuryCreated ? (
+                      <div style={{ color: '#080' }}>Treasury already created on-chain.</div>
+                    ) : (
+                      // Only allow the charity registrant (this page's wallet) to create the treasury
+                      (profile.registrant && charityAddr && profile.registrant.toLowerCase() === charityAddr.toLowerCase()) ? (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={createOwnTreasury}>Create Treasury (from this charity)</button>
+                          <button onClick={() => setTreasuryCreated(false)} style={{ marginLeft: 8 }}>Refresh</button>
+                        </div>
+                      ) : (
+                        <div style={{ color: '#666' }}>Only the charity registrant may create the treasury.</div>
+                      )
+                    )
+                  ) : (
+                    <div style={{ color: '#666' }}>No treasury contract assigned by admin yet.</div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ color: '#666' }}>No profile loaded</div>
+            )}
           </section>
 
           <section>
