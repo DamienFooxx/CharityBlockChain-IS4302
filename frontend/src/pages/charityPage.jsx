@@ -13,6 +13,7 @@ export default function CharityPage() {
   const [registryList, setRegistryList] = useState([]);
   const [events, setEvents] = useState([]);
   const [treasuryOwner, setTreasuryOwner] = useState(null);
+  const [treasuryCreated, setTreasuryCreated] = useState(false);
   const rpcUrl = "http://127.0.0.1:8545";
 
   // form
@@ -63,13 +64,17 @@ export default function CharityPage() {
             const tv = new ethers.Contract(p.treasury, treasuryViewAbi, provider);
             const data = await tv.treasuries(BigInt(org));
             const ownerAddr = data[4];
-            setTreasuryOwner(ownerAddr && ownerAddr !== ethers.ZeroAddress ? ownerAddr : null);
+            const owner = ownerAddr && ownerAddr !== ethers.ZeroAddress ? ownerAddr : null;
+            setTreasuryOwner(owner);
+            setTreasuryCreated(Boolean(owner));
           } else {
             setTreasuryOwner(null);
+              setTreasuryCreated(false);
           }
         } catch (e) {
           // ignore view errors
           setTreasuryOwner(null);
+            setTreasuryCreated(false);
         }
       } else {
         setProfile(null);
@@ -202,8 +207,8 @@ export default function CharityPage() {
                 <div><strong>Name:</strong> {profile.name}</div>
                 <div><strong>metaCID:</strong> {profile.metaCID}</div>
                 <div><strong>approved:</strong> {String(profile.approved)}</div>
-                <div><strong>treasury (contract):</strong> {profile.treasury || 'none'}</div>
-                <div><strong>treasury (account):</strong> {treasuryOwner || 'not created'}</div>
+                <div><strong>treasury (contract):</strong> {profile.treasury && profile.treasury !== ethers.ZeroAddress ? profile.treasury : 'not set yet'}</div>
+                <div><strong>treasury (account):</strong> {(profile.treasury && profile.treasury !== ethers.ZeroAddress) ? (treasuryOwner || 'not created') : 'not set yet'}</div>
               </div>
             ) : (
               <div style={{ marginTop: 8, color: '#666' }}>Charity not registered yet.</div>
@@ -226,7 +231,7 @@ export default function CharityPage() {
             <h3>Treasury</h3>
             {profile ? (
               <div style={{ maxWidth: 600 }}>
-                <div>Assigned treasury contract: <code>{profile.treasury || 'none'}</code></div>
+                <div>Assigned treasury contract: <code>{profile.treasury && profile.treasury !== ethers.ZeroAddress ? profile.treasury : 'not set yet'}</code></div>
                 <div style={{ marginTop: 8 }}>OrgId: {orgId}</div>
                 <div style={{ marginTop: 8 }}>
                   {profile.treasury && profile.treasury !== ethers.ZeroAddress ? (

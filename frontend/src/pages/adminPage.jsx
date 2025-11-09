@@ -83,6 +83,37 @@ export default function AdminPage() {
       await tx.wait();
       setStatus('Treasury assigned for org #' + orgId);
       await loadRegistrySummary();
+      // After assigning the registry pointer, attempt to initialize the treasury contract
+      try {
+        // fetch registrant for this orgId
+        const profile = await registry.profiles(orgId);
+        const registrant = profile.registrant;
+        if (registrant && registrant !== ethers.ZeroAddress) {
+          setStatus((s) => (s ? s + ' | Initializing treasury...' : 'Initializing treasury...'));
+          const treasuryAbi = [{ "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" }], "name": "createTreasury", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
+            { "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" }], "name": "treasuries", "outputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "uint256", "name": "totalBalance", "type": "uint256" },{ "internalType": "uint256", "name": "availableBalance", "type": "uint256" },{ "internalType": "uint256", "name": "lockedBalance", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" },{ "internalType": "bool", "name": "active", "type": "bool" },{ "internalType": "uint256", "name": "lastActivity", "type": "uint256" }], "stateMutability": "view", "type": "function" }];
+          const contract = new ethers.Contract(treasuryAddr, treasuryAbi, adminWallet);
+          // check whether treasury already exists
+          try {
+            const existing = await contract.treasuries(BigInt(orgId));
+            const owner = existing[4];
+            if (owner && owner !== ethers.ZeroAddress) {
+              setStatus('Treasury already exists for org ' + orgId + ' (owner: ' + owner + ')');
+              return;
+            }
+          } catch (e) {
+            // ignore view error and continue to attempt creation
+          }
+          const tx2 = await contract.createTreasury(BigInt(orgId), registrant);
+          setStatus('createTreasury tx sent: ' + tx2.hash);
+          await tx2.wait();
+          setStatus('Treasury created for org ' + orgId);
+          await loadRegistrySummary();
+        }
+      } catch (err2) {
+        // Non-fatal: report but don't treat as blocking
+        setStatus((s) => (s ? s + ' | createTreasury failed: ' + (err2.message || err2) : 'createTreasury failed: ' + (err2.message || err2)));
+      }
     } catch (e) {
       setStatus('Set treasury failed: ' + (e.message || e));
     }
