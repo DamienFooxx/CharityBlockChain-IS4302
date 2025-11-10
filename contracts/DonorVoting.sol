@@ -125,6 +125,24 @@ contract DonorVoting {
         _;
     }
 
+
+    /**
+    * Util functions
+    */
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+
+        // Start with an initial guess
+        uint256 z = (x + 1) / 2;
+        y = x;
+
+        // Iterate until the guess converges
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+    }
+
     /**
     * Oracle-Facing Functions
      */
@@ -145,7 +163,7 @@ contract DonorVoting {
         uint256 weightMultiplier = donorRanking.getVotingWeight(voter);
         
         // Calculate final weighted vote power
-        uint256 finalWeight = (pledgedAmount * weightMultiplier) / 100;
+        uint256 finalWeight = (sqrt(pledgedAmount) * weightMultiplier) / 100;
 
         // Record assignment
         isAssigned[voter] = true;
@@ -239,7 +257,7 @@ contract DonorVoting {
         uint256 weightMultiplier = donorRanking.getVotingWeight(msg.sender);
         
         // Calculate final weighted vote power
-        uint256 finalWeight = (pledgedAmount * weightMultiplier) / 100;
+        uint256 finalWeight = (sqrt(pledgedAmount) * weightMultiplier) / 100;
 
         // Add vote to the correct stream's tally
         uint8 stream = assignedStream[msg.sender];
