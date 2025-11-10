@@ -482,6 +482,7 @@ describe("Oracle", function () {
         charityEvent,
         escrowVault,
         charityTreasury,
+        sgdCoin,
         runFullDonorVote,
         advanceTime,
         charityOwner, 
@@ -516,6 +517,17 @@ describe("Oracle", function () {
       expect(await escrowVault.releaseRecipient(eventId)).to.equal(
         charityTreasury.target
       );
+
+      // 7. Verify CharityTreasury received tokens and recorded balances
+      // Sum of pledges from fixture = 1000 + 2000 + 5000 = 8000
+      const expectedTotal = 8000n;
+      const orgIdFromEvent = await charityEvent.orgId();
+      const treasuryRecord = await charityTreasury.treasuries(orgIdFromEvent);
+      expect(treasuryRecord.totalBalance).to.equal(expectedTotal);
+      expect(treasuryRecord.availableBalance).to.equal(expectedTotal);
+      // Token balance at treasury address also equals expectedTotal
+      const tokenBal = await sgdCoin.balanceOf(charityTreasury.target);
+      expect(tokenBal).to.equal(expectedTotal);
     });
 
     it("4b) disburseIfVerified: FAIL path (reverts)", async () => {

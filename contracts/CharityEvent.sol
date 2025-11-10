@@ -138,7 +138,10 @@ contract CharityEvent is Registry {
     function updateRaised(
         uint256 amount
     ) external whenNotPaused inPhase(EventPhase.FUNDING) {
-        // This should be called by the DonorPledges contract
+        address donorPledges = governance.getContractAddress("DonorPledges");
+        require(donorPledges != address(0), "DonorPledges not set");
+        require(msg.sender == donorPledges, "Not authorized");
+
         totalRaised += amount;
         emit FundsRaised(eventId, totalRaised);
 
