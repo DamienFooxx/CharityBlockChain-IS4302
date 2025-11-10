@@ -17,7 +17,6 @@ describe("Oracle", function () {
       owner,
       oracle,
       charityOwner,
-      beneficiary,
       donor1,
       donor2,
       donor3,
@@ -63,6 +62,31 @@ describe("Oracle", function () {
     const attestorRegistry = await AttestorRegistry.deploy(governance.target);
     await attestorRegistry.waitForDeployment();
 
+    // 1. Deploy CharityRegistry
+    const CharityRegistry = await ethers.getContractFactory("CharityRegistry");
+    const charityRegistry = await CharityRegistry.deploy(governance.target);
+    await charityRegistry.waitForDeployment();
+
+    // 2. Deploy CharityTreasury
+    const CharityTreasury = await ethers.getContractFactory("CharityTreasury");
+    const charityTreasury = await CharityTreasury.deploy(
+      sgdCoin.target,
+      governance.target
+    );
+    await charityTreasury.waitForDeployment();
+
+    // 3. Setup a Charity and link the Treasury
+    const orgId = 1n;
+    await charityRegistry
+      .connect(charityOwner)
+      ["registerCharity(string,string)"]("Test Charity", "cid");
+    await charityTreasury
+      .connect(owner) // Admin creates treasury
+      .createTreasury(orgId, charityOwner.address);
+    await charityRegistry
+      .connect(owner) // Admin links treasury
+      .setTreasury(orgId, charityTreasury.target);
+
     // --- Deploy Donor Support Contracts ---
     const DonorPledges = await ethers.getContractFactory("DonorPledges");
     const donorPledges = await DonorPledges.deploy(
@@ -84,10 +108,10 @@ describe("Oracle", function () {
     const CharityEvent = await ethers.getContractFactory("CharityEvent");
     const charityEvent = await CharityEvent.connect(charityOwner).deploy(
       governance.target,
-      ethers.ZeroAddress, // CharityRegistry (not needed for this test)
+      charityRegistry.target,
       eventId,
-      1n, // orgId
-      beneficiary.address,
+      orgId,
+      charityTreasury.target,
       1000n, // fundingGoal
       (await ethers.provider.getBlock("latest")).timestamp + 86400, // deadline
       "Test Event"
@@ -216,6 +240,8 @@ describe("Oracle", function () {
       attestorVoting,
       charityEvent,
       escrowVault,
+      charityRegistry,
+      charityTreasury,
       donorRegistry,
       donorPledges,
       donorRanking,
@@ -224,7 +250,6 @@ describe("Oracle", function () {
       owner,
       oracle,
       charityOwner,
-      beneficiary,
       donor1,
       donor2,
       donor3,
@@ -456,12 +481,12 @@ describe("Oracle", function () {
         oracle,
         charityEvent,
         escrowVault,
-        beneficiary,
+        charityTreasury,
+        sgdCoin,
         runFullDonorVote,
         advanceTime,
-        charityOwner, // <-- Make sure charityOwner is loaded
+        charityOwner, 
       } = fixture;
-
       // 1. Run donor vote to PASS (true)
       await runFullDonorVote(true);
 
@@ -483,15 +508,26 @@ describe("Oracle", function () {
       // This will now call setVerified() on the CharityEvent, which is in the correct VERIFICATION phase
       await expect(oracleContract.connect(oracle).disburseIfVerified(eventId))
         .to.emit(oracleContract, "Disbursed")
-        .withArgs(eventId, beneficiary.address);
+        .withArgs(eventId, charityTreasury.target);
 
       // 6. Check effects
       expect(await charityEvent.verified()).to.be.true;
       expect(await charityEvent.phase()).to.equal(4); // 3 = EventPhase.COMPLETED for event finish and fund disbursemnet
       expect(await escrowVault.released(eventId)).to.be.true;
       expect(await escrowVault.releaseRecipient(eventId)).to.equal(
-        beneficiary.address
+        charityTreasury.target
       );
+
+      // 7. Verify CharityTreasury received tokens and recorded balances
+      // Sum of pledges from fixture = 1000 + 2000 + 5000 = 8000
+      const expectedTotal = 8000n;
+      const orgIdFromEvent = await charityEvent.orgId();
+      const treasuryRecord = await charityTreasury.treasuries(orgIdFromEvent);
+      expect(treasuryRecord.totalBalance).to.equal(expectedTotal);
+      expect(treasuryRecord.availableBalance).to.equal(expectedTotal);
+      // Token balance at treasury address also equals expectedTotal
+      const tokenBal = await sgdCoin.balanceOf(charityTreasury.target);
+      expect(tokenBal).to.equal(expectedTotal);
     });
 
     it("4b) disburseIfVerified: FAIL path (reverts)", async () => {
