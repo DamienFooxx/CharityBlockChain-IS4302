@@ -451,6 +451,57 @@ describe("Charity contracts integration", function () {
   });
 
   // =================================================================
+  // X. CharityEvent.updateRaised access control (integration)
+  // =================================================================
+  describe("X. CharityEvent.updateRaised access control", function () {
+    it("rejects non-DonorPledges callers and accepts the configured DonorPledges address", async () => {
+      const {
+        governance,
+        registry,
+        beneficiary,
+        charityOwner,
+      } = await loadFixture(deployCharityFixture);
+
+      // Deploy a CharityEvent
+      const CharityEvent = await ethers.getContractFactory("CharityEvent");
+      const evId = ethers.keccak256(ethers.toUtf8Bytes("access-test-1"));
+      const goal = 1000n;
+      const now = await time.latest();
+      const deadline = now + 3600;
+      const eventCtr = await CharityEvent.connect(charityOwner).deploy(
+        await governance.getAddress(),
+        await registry.getAddress(),
+        evId,
+        1n, // orgId
+        await beneficiary.getAddress(),
+        goal,
+        deadline,
+        "Access Test Event"
+      );
+      await eventCtr.waitForDeployment();
+
+      const [ , , , , , , , attacker, donorPledgesSim ] = await ethers.getSigners();
+
+      // Set the DonorPledges contract address in Governance to donorPledgesSim
+      await governance
+        .connect(await (await ethers.getSigners())[0])
+        .setContractAddress("DonorPledges", donorPledgesSim.address);
+
+      // 1) Non-authorized caller should revert
+      await expect(
+        eventCtr.connect(attacker).updateRaised(100n)
+      ).to.be.revertedWith("Not authorized");
+
+      // 2) Authorized (configured) address can call
+      await expect(eventCtr.connect(donorPledgesSim).updateRaised(250n))
+        .to.emit(eventCtr, "FundsRaised");
+
+      const totalRaised = await eventCtr.totalRaised();
+      expect(totalRaised).to.equal(250n);
+    });
+  });
+
+  // =================================================================
   // 2. CharityReputation Tests
   // =================================================================
   describe("2. CharityReputation", function () {
@@ -1174,9 +1225,11 @@ it("3d) should confirm funds received from oracle and update balances", async ()
     async function setupEventFixture() {
       const fixture = await loadFixture(deployCharityFixture);
       const {
+        governance,
         registry,
         createEvent,
         charityOwner,
+        deployer,
         registerCharity,
         getEventGoalReached,
         getEventDeadlinePassed,
@@ -1192,6 +1245,11 @@ it("3d) should confirm funds received from oracle and update balances", async ()
         ethers.parseEther("100"),
         3600
       );
+
+      // Configure DonorPledges address so CharityEvent.updateRaised can be called by deployer
+      await governance
+        .connect(deployer)
+        .setContractAddress("DonorPledges", await deployer.getAddress());
 
       return {
         ...fixture,
@@ -1560,6 +1618,7 @@ it("3d) should confirm funds received from oracle and update balances", async ()
 describe("5. Integration Tests", function () {
     it("5a) full flow: register -> approve -> create treasury -> fund -> verify -> release", async () => {
       const {
+        governance,
         registry,
         treasury,
         reputation,
@@ -1602,6 +1661,9 @@ describe("5. Integration Tests", function () {
       const eventId = await eventCtr.eventId(); // Get the bytes32 eventId
 
       // Fund event (simulated)
+      await governance
+        .connect(deployer)
+        .setContractAddress("DonorPledges", await deployer.getAddress());
       await eventCtr.connect(deployer).updateRaised(ethers.parseEther("100"));
       expect((await eventCtr.getEventSummary())[2]).to.equal(1n); // CLOSED
 
