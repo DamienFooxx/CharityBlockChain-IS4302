@@ -4,6 +4,20 @@ const { ethers } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 
 // Note: Using BigInt (e.g., 1000n) for EVM numbers.
+function sqrt(value) {
+  if (value < 0n) {
+    throw new Error("square root of negative numbers is not supported");
+  }
+  if (value === 0n) return 0n;
+
+  let z = (value + 1n) / 2n;
+  let y = value;
+  while (z < y) {
+    y = z;
+    z = (value / z + z) / 2n;
+  }
+  return y;
+}
 
 describe("DonorVoting", function () {
   const eventId = ethers.id("EVENT_1"); // keccak256("EVENT_1")
@@ -225,7 +239,7 @@ describe("DonorVoting", function () {
       const stream = 0;
       const pledgeAmount = 1000n; // From fixture setup
       const weightMultiplier = 100n; // Default from DonorRanking
-      const finalWeight = (pledgeAmount * weightMultiplier) / 100n; // 1000
+      const finalWeight = (sqrt(pledgeAmount) * weightMultiplier) / 100n; // 1000
 
       await expect(
         donorVoting.connect(oracle).assignVoter(donor1.address, stream)
@@ -250,7 +264,7 @@ describe("DonorVoting", function () {
       await donorVoting.connect(oracle).assignVoter(donor1.address, stream);
       await donorVoting.connect(oracle).assignVoter(donor2.address, stream);
 
-      expect(await donorVoting.totalPossibleWeight(stream)).to.equal(3000n);
+      expect(await donorVoting.totalPossibleWeight(stream)).to.equal(75n);
     });
 
     it("2g) assignVoter: reverts for non-oracle", async () => {
@@ -439,7 +453,7 @@ describe("DonorVoting", function () {
     it("4a) reveal: allows valid 'pass' reveal and tallies correctly", async () => {
       const { donorVoting, donor1, oracle, advanceTime } = fixture;
       const stream = 0;
-      const finalWeight = 1000n;
+      const finalWeight = sqrt(1000n);
 
       // Commit "true"
       await donorVoting.connect(donor1).commit(commitTrue);
@@ -463,7 +477,7 @@ describe("DonorVoting", function () {
     it("4b) reveal: allows valid 'fail' reveal and tallies correctly", async () => {
       const { donorVoting, donor1, oracle, advanceTime } = fixture;
       const stream = 0;
-      const finalWeight = 1000n;
+      const finalWeight = sqrt(1000n);
 
       // Commit "false"
       await donorVoting.connect(donor1).commit(commitFalse);
