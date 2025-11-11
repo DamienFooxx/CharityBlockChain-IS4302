@@ -24,4 +24,8 @@
     "merkletreejs": "^0.6.0",
     "web3": "^4.16.0"
   }
+  ,
+  "scripts": {
+    "export-abis": "node ./scripts/export-abis.js"
+  }
 }
