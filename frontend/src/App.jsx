@@ -5,6 +5,7 @@ import addresses from "./config/addresses.json";
 import DonorPage from "./pages/donorPage";
 import CharityPage from "./pages/charityPage";
 import AdminPage from "./pages/adminPage";
+import EventsPage from "./pages/eventsPage";
 
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
   const [showDonor, setShowDonor] = useState(false);
   const [showCharity, setShowCharity] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showEvents, setShowEvents] = useState(false);
 
   useEffect(() => {
     console.log("Loaded contract addresses:", addresses);
@@ -45,6 +47,9 @@ function App() {
           <button style={{ marginLeft: 8 }} onClick={() => setShowAdmin((s) => !s)}>
             {showAdmin ? "Close Admin Page" : "Open Admin Page"}
           </button>
+          <button style={{ marginLeft: 8 }} onClick={() => setShowEvents((s) => !s)}>
+            {showEvents ? "Close Events Page" : "Open Events Page"}
+          </button>
         </div>
       </header>
 
@@ -55,9 +60,11 @@ function App() {
           <DonorPage />
         ) : showCharity ? (
           <CharityPage />
+        ) : showEvents ? (
+          <EventsPage />
         ) : (
           <div>
-            <p>Use the "Open Donor Page", "Open Charity Page" or "Open Admin Page" button to view helpers.</p>
+            <p>Use the "Open Donor Page", "Open Charity Page", "Open Admin Page" or "Open Events Page" button to view helpers.</p>
           </div>
         )}
       </main>
