@@ -35,8 +35,22 @@ describe("EscrowVault: ", function () {
     await governance.waitForDeployment();
     console.log("governance.address =", governance.target);
 
+    const DonorRegistry = await ethers.getContractFactory("DonorRegistry");
+    const donorRegistry = await DonorRegistry.deploy(governance.target);
+    await donorRegistry.waitForDeployment();
+
+    // Register and verify donors before pledging
+    await donorRegistry.connect(donor1).registerDonor("Donor 1", "cid");
+    await donorRegistry.connect(donor2).registerDonor("Donor 2", "cid");
+    await donorRegistry.connect(owner).setVerification(donor1.address, true);
+    await donorRegistry.connect(owner).setVerification(donor2.address, true);
+
     DonorPledges = await ethers.getContractFactory("DonorPledges");
-    pledges = await DonorPledges.deploy(governance.target, sgdCoin.target);
+    pledges = await DonorPledges.deploy(
+      governance.target,
+      sgdCoin.target,
+      donorRegistry.target
+    );
     await pledges.waitForDeployment();
     console.log("pledges.address =", pledges.target);
 

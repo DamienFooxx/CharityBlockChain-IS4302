@@ -36,7 +36,8 @@ describe("AttestorVoting", function () {
     const DonorPledges = await ethers.getContractFactory("DonorPledges");
     const donorPledges = await DonorPledges.deploy(
       governance.target,
-      sgdCoin.target
+      sgdCoin.target,
+      donorRegistry.target
     );
     await donorPledges.waitForDeployment();
 
@@ -99,6 +100,8 @@ describe("AttestorVoting", function () {
     ];
     for (const { donor, pledge } of donorPledgesList) {
       await donorRegistry.connect(donor).registerDonor("Donor", "cid");
+      // verify donor
+      await donorRegistry.connect(owner).setVerification(donor.address, true);
       await sgdCoin.connect(donor).approve(donorPledges.target, pledge);
       await donorPledges.connect(donor).createPledge(eventId, pledge);
     }

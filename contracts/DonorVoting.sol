@@ -21,7 +21,6 @@ import "./DonorRanking.sol";
  * It reads from Governance for role checks (onlyOracle) and quorum rules.
  */
 contract DonorVoting {
-
     Governance public immutable governance;
     DonorRegistry public immutable donorRegistry;
     DonorPledges public immutable donorPledges;
@@ -31,8 +30,13 @@ contract DonorVoting {
     bytes32 public immutable eventId;
 
     uint8 public constant NUM_STREAMS = 3;
- 
-    enum Phase { Pending, Commit, Reveal, Finalized }
+
+    enum Phase {
+        Pending,
+        Commit,
+        Reveal,
+        Finalized
+    }
     Phase public phase;
 
     uint256 public commitDeadline;
@@ -66,11 +70,16 @@ contract DonorVoting {
     event DeadlinesAdjusted(uint256 commitDeadline, uint256 revealDeadline);
     event PhaseAdvanced(Phase newPhase);
     event Voted(address indexed voter, uint8 indexed stream);
-    event Revealed(address indexed voter, uint8 indexed stream, bool choice, uint256 weight);
+    event Revealed(
+        address indexed voter,
+        uint8 indexed stream,
+        bool choice,
+        uint256 weight
+    );
     event Finalized(bool overallPassed, bool[3] streamResults);
 
     /**
-    * Constructor
+     * Constructor
      */
 
     /**
@@ -89,10 +98,10 @@ contract DonorVoting {
         bytes32 _eventId
     ) {
         require(
-            _governance != address(0) && 
-            _donorRegistry != address(0) && 
-            _donorPledges != address(0) &&
-            _donorRanking != address(0),
+            _governance != address(0) &&
+                _donorRegistry != address(0) &&
+                _donorPledges != address(0) &&
+                _donorRanking != address(0),
             "DonorVoting: Zero address dependency"
         );
         require(_eventId != bytes32(0), "DonorVoting: Zero eventId");
@@ -105,15 +114,18 @@ contract DonorVoting {
         phase = Phase.Pending;
     }
 
-    /** 
-    * Modifiers
+    /**
+     * Modifiers
      */
 
     /**
      * @dev Throws if called by any account other than the Oracle.
      */
     modifier onlyOracle() {
-        require(governance.hasRole(governance.ORACLE_ROLE(), msg.sender), "DonorVoting: Not oracle");
+        require(
+            governance.hasRole(governance.ORACLE_ROLE(), msg.sender),
+            "DonorVoting: Not oracle"
+        );
         _;
     }
 
@@ -125,10 +137,9 @@ contract DonorVoting {
         _;
     }
 
-
     /**
-    * Util functions
-    */
+     * Util functions
+     */
     function sqrt(uint256 x) internal pure returns (uint256 y) {
         if (x == 0) return 0;
 
@@ -144,24 +155,33 @@ contract DonorVoting {
     }
 
     /**
-    * Oracle-Facing Functions
+     * Oracle-Facing Functions
      */
 
     /**
      * @notice (Oracle) Assign a donor to exactly one evidence stream.
      * This function calculates the voter's weighted vote power.
      */
-    function assignVoter(address voter, uint8 stream) external onlyOracle inPhase(Phase.Pending) {
+    function assignVoter(
+        address voter,
+        uint8 stream
+    ) external onlyOracle inPhase(Phase.Pending) {
         require(stream < NUM_STREAMS, "DonorVoting: Invalid stream");
         require(!isAssigned[voter], "DonorVoting: Already assigned");
-        require(donorRegistry.isRegistered(voter), "DonorVoting: Not registered");
+        require(
+            donorRegistry.isDonorRegistered(voter),
+            "DonorVoting: Not registered"
+        );
 
-        uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(voter, eventId);
+        uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(
+            voter,
+            eventId
+        );
         require(pledgedAmount > 0, "DonorVoting: No pledge weight");
 
         // Get reputation multiplier (e.g., 100 for 1x, 110 for 1.1x)
         uint256 weightMultiplier = donorRanking.getVotingWeight(voter);
-        
+
         // Calculate final weighted vote power
         uint256 finalWeight = (sqrt(pledgedAmount) * weightMultiplier) / 100;
 
@@ -179,10 +199,19 @@ contract DonorVoting {
      * @notice (Oracle) Adjust commit and reveal deadlines for this module/round.
      * @dev See interface documentation.
      */
-    function adjustDeadline(uint256 _commitDeadline, uint256 _revealDeadline) external onlyOracle {
+    function adjustDeadline(
+        uint256 _commitDeadline,
+        uint256 _revealDeadline
+    ) external onlyOracle {
         require(phase == Phase.Pending, "DonorVoting: Voting started");
-        require(_commitDeadline < _revealDeadline, "DonorVoting: Commit < Reveal");
-        require(_commitDeadline > block.timestamp, "DonorVoting: Commit in past");
+        require(
+            _commitDeadline < _revealDeadline,
+            "DonorVoting: Commit < Reveal"
+        );
+        require(
+            _commitDeadline > block.timestamp,
+            "DonorVoting: Commit in past"
+        );
 
         commitDeadline = _commitDeadline;
         revealDeadline = _revealDeadline;
@@ -196,13 +225,22 @@ contract DonorVoting {
      */
     function advancePhase() external onlyOracle {
         if (phase == Phase.Pending) {
-            require(commitDeadline > 0 && revealDeadline > 0, "DonorVoting: Deadlines not set");
+            require(
+                commitDeadline > 0 && revealDeadline > 0,
+                "DonorVoting: Deadlines not set"
+            );
             phase = Phase.Commit;
         } else if (phase == Phase.Commit) {
-            require(block.timestamp >= commitDeadline, "DonorVoting: Commit open");
+            require(
+                block.timestamp >= commitDeadline,
+                "DonorVoting: Commit open"
+            );
             phase = Phase.Reveal;
         } else if (phase == Phase.Reveal) {
-            require(block.timestamp >= revealDeadline, "DonorVoting: Reveal open");
+            require(
+                block.timestamp >= revealDeadline,
+                "DonorVoting: Reveal open"
+            );
             phase = Phase.Finalized;
             _finalize();
         } else {
@@ -213,7 +251,7 @@ contract DonorVoting {
     }
 
     /**
-    * Donor-Facing Functions (Commit/Reveal)
+     * Donor-Facing Functions (Commit/Reveal)
      */
 
     /**
@@ -223,7 +261,10 @@ contract DonorVoting {
      */
     function commit(bytes32 _commitment) external inPhase(Phase.Commit) {
         require(isAssigned[msg.sender], "DonorVoting: Not assigned");
-        require(commitments[msg.sender] == bytes32(0), "DonorVoting: Already committed");
+        require(
+            commitments[msg.sender] == bytes32(0),
+            "DonorVoting: Already committed"
+        );
         require(_commitment != bytes32(0), "DonorVoting: Invalid commitment");
 
         commitments[msg.sender] = _commitment;
@@ -235,7 +276,10 @@ contract DonorVoting {
      * @param _choice The vote (true for "Pass", false for "Fail").
      * @param _salt The secret salt used to generate the commitment.
      */
-    function reveal(bool _choice, uint256 _salt) external inPhase(Phase.Reveal) {
+    function reveal(
+        bool _choice,
+        uint256 _salt
+    ) external inPhase(Phase.Reveal) {
         bytes32 commitment = commitments[msg.sender];
         require(commitment != bytes32(0), "DonorVoting: No commit");
         require(!revealed[msg.sender], "DonorVoting: Already revealed");
@@ -247,7 +291,10 @@ contract DonorVoting {
         revealed[msg.sender] = true;
 
         // Get voter's base weight (pledge amount)
-        uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(msg.sender, eventId);
+        uint256 pledgedAmount = donorPledges.getDonorStakeInEvent(
+            msg.sender,
+            eventId
+        );
         if (pledgedAmount == 0) {
             // Pledge might have been withdrawn; vote is nullified.
             return;
@@ -255,7 +302,7 @@ contract DonorVoting {
 
         // Get reputation multiplier (e.g., 100 for 1x, 110 for 1.1x)
         uint256 weightMultiplier = donorRanking.getVotingWeight(msg.sender);
-        
+
         // Calculate final weighted vote power
         uint256 finalWeight = (sqrt(pledgedAmount) * weightMultiplier) / 100;
 
@@ -274,7 +321,7 @@ contract DonorVoting {
     }
 
     /**
-    * Internal logic
+     * Internal logic
      */
 
     /**
@@ -288,7 +335,7 @@ contract DonorVoting {
      *
      * A stream passes iff BOTH Quorum and Majority are met.
      */
-function _finalize() internal {
+    function _finalize() internal {
         uint256 quorumRequiredBps = governance.globalQuorumBps(); // Fetch quorum threshold
         uint256 passMajorityRequiredBps = governance.globalPassMajorityBps(); // <-- Fetch NEW pass threshold
         bool _overallPassed = true;
@@ -302,14 +349,17 @@ function _finalize() internal {
             if (streamTotalPossible > 0 && tally.totalWeight > 0) {
                 // --- Check 1: Quorum ---
                 // Is participation weight % >= quorumRequiredBps?
-                uint256 participationBps = (tally.totalWeight * 10000) / streamTotalPossible;
+                uint256 participationBps = (tally.totalWeight * 10000) /
+                    streamTotalPossible;
                 bool quorumMet = participationBps >= quorumRequiredBps;
 
                 if (quorumMet) {
                     // --- Check 2: Pass Majority Threshold ---
                     // Is pass weight % of *participating* weight >= passMajorityRequiredBps?
-                    uint256 passPercentageBps = (tally.pass * 10000) / tally.totalWeight;
-                    bool passThresholdMet = passPercentageBps >= passMajorityRequiredBps; // <-- USES NEW VARIABLE
+                    uint256 passPercentageBps = (tally.pass * 10000) /
+                        tally.totalWeight;
+                    bool passThresholdMet = passPercentageBps >=
+                        passMajorityRequiredBps; // <-- USES NEW VARIABLE
 
                     if (passThresholdMet) {
                         streamPasses = true; // Only passes if BOTH checks are true
@@ -328,15 +378,17 @@ function _finalize() internal {
         emit Finalized(_overallPassed, streamPassed);
     }
 
-    /** 
-    * View Functions (Oracle-Facing)
+    /**
+     * View Functions (Oracle-Facing)
      */
 
     /**
      * @notice Read the per-stream decision (donor "truth") once finalized.
      * @dev See interface documentation.
      */
-    function streamResult(uint8 stream) external view returns (bool decided, bool passed) {
+    function streamResult(
+        uint8 stream
+    ) external view returns (bool decided, bool passed) {
         require(stream < NUM_STREAMS, "DonorVoting: Invalid stream");
 
         if (phase != Phase.Finalized) {
@@ -350,7 +402,11 @@ function _finalize() internal {
      * @notice Aggregate decision across all streams for escrow gating.
      * @dev See interface documentation.
      */
-    function overallResult() external view returns (bool decided, bool passed, bool[3] memory perStream) {
+    function overallResult()
+        external
+        view
+        returns (bool decided, bool passed, bool[3] memory perStream)
+    {
         if (phase != Phase.Finalized) {
             return (false, false, [false, false, false]);
         }

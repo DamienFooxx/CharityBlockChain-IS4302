@@ -56,7 +56,8 @@ describe("DonorVoting", function () {
     const DonorPledges = await ethers.getContractFactory("DonorPledges");
     const donorPledges = await DonorPledges.deploy(
       governance.target,
-      sgdCoin.target
+      sgdCoin.target,
+      donorRegistry.target
     );
     await donorPledges.waitForDeployment();
 
@@ -98,6 +99,8 @@ describe("DonorVoting", function () {
       await donorRegistry
         .connect(donor)
         .registerDonor(`Donor ${i + 1}`, "ipfs://cid");
+      // b) Must be verified by admin before pledging
+      await donorRegistry.connect(owner).setVerification(donor.address, true);
 
       // b) Fund donor
       await sgdCoin.connect(owner).mint(donor.address, pledgeAmount);

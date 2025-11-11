@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "./SGDCoin.sol";
 import "./Registry.sol";
 import "./EscrowVault.sol";
+import "./DonorRegistry.sol";
 
 /**
  * @title DonorPledges
@@ -24,6 +25,7 @@ contract DonorPledges is Registry {
 
     // State variables
     SGDCoin public sgdToken;
+    DonorRegistry public donorRegistry;
 
     uint256 public pledgeCounter;
 
@@ -80,9 +82,15 @@ contract DonorPledges is Registry {
     /**
      * @dev Constructor
      */
-    constructor(address _governance, address _sgdToken) Registry(_governance) {
+    constructor(
+        address _governance,
+        address _sgdToken,
+        address _donorRegistry
+    ) Registry(_governance) {
         require(_sgdToken != address(0), "Invalid token address");
+        require(_donorRegistry != address(0), "Invalid donor registry");
         sgdToken = SGDCoin(_sgdToken);
+        donorRegistry = DonorRegistry(_donorRegistry);
         pledgeCounter = 0;
     }
 
@@ -107,6 +115,15 @@ contract DonorPledges is Registry {
         bytes32 _eventId,
         uint256 _amount
     ) external whenNotPaused whenSystemNotPaused returns (uint256) {
+        // Donor must be registered and verified in DonorRegistry
+        require(
+            donorRegistry.isDonorRegistered(msg.sender),
+            "DonorPledges: Not registered"
+        );
+        require(
+            donorRegistry.isDonorVerified(msg.sender),
+            "DonorPledges: Donor not verified"
+        );
         require(_eventId != bytes32(0), "Invalid event ID");
         require(_amount > 0, "Amount must be greater than 0");
         require(
