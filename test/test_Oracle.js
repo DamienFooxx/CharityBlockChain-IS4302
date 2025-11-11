@@ -91,7 +91,8 @@ describe("Oracle", function () {
     const DonorPledges = await ethers.getContractFactory("DonorPledges");
     const donorPledges = await DonorPledges.deploy(
       governance.target,
-      sgdCoin.target
+      sgdCoin.target,
+      donorRegistry.target
     );
     await donorPledges.waitForDeployment();
 
@@ -157,6 +158,8 @@ describe("Oracle", function () {
       const donor = donors[i];
       const pledgeAmount = pledges[i];
       await donorRegistry.connect(donor).registerDonor(`Donor ${i + 1}`, "cid");
+      // verify donor before pledging
+      await donorRegistry.connect(owner).setVerification(donor.address, true);
       await sgdCoin.connect(owner).mint(donor.address, pledgeAmount);
       await sgdCoin.connect(donor).approve(donorPledges.target, pledgeAmount);
       await donorPledges.connect(donor).createPledge(eventId, pledgeAmount);
@@ -485,7 +488,7 @@ describe("Oracle", function () {
         sgdCoin,
         runFullDonorVote,
         advanceTime,
-        charityOwner, 
+        charityOwner,
       } = fixture;
       // 1. Run donor vote to PASS (true)
       await runFullDonorVote(true);
