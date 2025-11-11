@@ -14,7 +14,14 @@ async function run() {
     const artifactsDir = path.join(repoRoot, "artifacts", "contracts");
     const outDir = path.join(repoRoot, "frontend", "src", "abi");
 
-    // ensure output dir exists
+    // remove any existing files in output dir to avoid duplicates, then recreate
+    try {
+      await fs.rm(outDir, { recursive: true, force: true });
+      console.log("Cleared existing ABI output dir:", outDir);
+    } catch (e) {
+      // ignore
+    }
+    await fs.mkdir(outDir, { recursive: true });
     await fs.mkdir(outDir, { recursive: true });
 
     console.log("Scanning artifacts in", artifactsDir);
@@ -31,6 +38,12 @@ async function run() {
             // validate JSON
             JSON.parse(content);
             const name = path.basename(full);
+            // skip dbg artifacts (these are large debug metadata files)
+            if (name.endsWith(".dbg.json")) {
+              // skip
+              // console.log('Skipping dbg file', name);
+              continue;
+            }
             const dest = path.join(outDir, name);
             await fs.writeFile(dest, content, "utf8");
             console.log("Copied", name);
