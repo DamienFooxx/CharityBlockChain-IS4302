@@ -35,6 +35,9 @@ export default function EventsPage() {
   const [donorIndex, setDonorIndex] = useState(1);
   const [pledgeAmount, setPledgeAmount] = useState("50");
 
+  // Event log
+  const [events, setEvents] = useState([]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -215,10 +218,89 @@ export default function EventsPage() {
     }
   }
 
+  function short(addr) {
+    if (!addr) return "";
+    return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  }
+
+  // Event listeners for CharityEvent and DonorPledges
+  useEffect(() => {
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+    function pushEvent(obj) {
+      setEvents((prev) => [obj, ...prev].slice(0, 200));
+    }
+
+    const cleanupFunctions = [];
+
+    // Listen to CharityEvent events (if eventAddress is set)
+    if (eventAddress) {
+      const ev = new ethers.Contract(eventAddress, CharityEventArtifact.abi, provider);
+      
+      const onEventCreated = (evId, orgId, fundingGoal, deadline, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'EventCreated', eventId: evId, orgId: Number(orgId), goal: fundingGoal.toString(), deadline: deadline.toString(), tx: event.transactionHash });
+      };
+      const onPhaseChanged = (evId, oldPhase, newPhase, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'PhaseChanged', eventId: evId, oldPhase: Number(oldPhase), newPhase: Number(newPhase), tx: event.transactionHash });
+      };
+      const onFundsRaised = (evId, totalRaised, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'FundsRaised', eventId: evId, totalRaised: totalRaised.toString(), tx: event.transactionHash });
+      };
+      const onEvidenceSubmitted = (evId, evidenceCID, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'EvidenceSubmitted', eventId: evId, evidenceCID, tx: event.transactionHash });
+      };
+      const onVerifiedSet = (evId, verified, perStream, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'VerifiedSet', eventId: evId, verified, perStream: perStream.map(String), tx: event.transactionHash });
+      };
+
+      try { ev.on('EventCreated', onEventCreated); } catch (e) {}
+      try { ev.on('PhaseChanged', onPhaseChanged); } catch (e) {}
+      try { ev.on('FundsRaised', onFundsRaised); } catch (e) {}
+      try { ev.on('EvidenceSubmitted', onEvidenceSubmitted); } catch (e) {}
+      try { ev.on('VerifiedSet', onVerifiedSet); } catch (e) {}
+
+      cleanupFunctions.push(() => {
+        try { ev.off('EventCreated', onEventCreated); } catch (e) {}
+        try { ev.off('PhaseChanged', onPhaseChanged); } catch (e) {}
+        try { ev.off('FundsRaised', onFundsRaised); } catch (e) {}
+        try { ev.off('EvidenceSubmitted', onEvidenceSubmitted); } catch (e) {}
+        try { ev.off('VerifiedSet', onVerifiedSet); } catch (e) {}
+      });
+    }
+
+    // Listen to DonorPledges events
+    if (addresses.DonorPledges) {
+      const pledges = new ethers.Contract(addresses.DonorPledges, DonorPledgesArtifact.abi, provider);
+      
+      const onPledgeCreated = (pledgeId, donor, evId, amount, timestamp, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'PledgeCreated', pledgeId: Number(pledgeId), donor, eventId: evId, amount: amount.toString(), timestamp: timestamp.toString(), tx: event.transactionHash });
+      };
+      const onPledgeWithdrawn = (pledgeId, donor, amount, event) => {
+        pushEvent({ id: Date.now() + Math.random(), type: 'PledgeWithdrawn', pledgeId: Number(pledgeId), donor, amount: amount.toString(), tx: event.transactionHash });
+      };
+
+      try { pledges.on('PledgeCreated', onPledgeCreated); } catch (e) {}
+      try { pledges.on('PledgeWithdrawn', onPledgeWithdrawn); } catch (e) {}
+
+      cleanupFunctions.push(() => {
+        try { pledges.off('PledgeCreated', onPledgeCreated); } catch (e) {}
+        try { pledges.off('PledgeWithdrawn', onPledgeWithdrawn); } catch (e) {}
+      });
+    }
+
+    return () => {
+      cleanupFunctions.forEach(fn => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventAddress]);
+
   return (
     <div style={{ padding: 20 }}>
       <h2>Events Page</h2>
       <div style={{ marginBottom: 8 }}>{status}</div>
+
+      <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ flex: 2 }}>
 
       <section style={{ marginBottom: 12 }}>
         <h3>Charity Context</h3>
@@ -284,6 +366,81 @@ export default function EventsPage() {
           <button onClick={donorApproveAndPledge}>Approve + Pledge</button>
         </div>
       </section>
+        </div>
+
+        <div style={{ flex: 1, borderLeft: '1px solid #eee', paddingLeft: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Event Log</h3>
+            <div><button onClick={() => setEvents([])}>Clear</button></div>
+          </div>
+          <div style={{ marginTop: 8, maxHeight: '70vh', overflow: 'auto' }}>
+            {events.length === 0 ? (
+              <div style={{ color: '#666' }}>No events yet. Events (EventCreated, PhaseChanged, FundsRaised, EvidenceSubmitted, PledgeCreated, etc.) will appear here.</div>
+            ) : (
+              events.map((ev) => (
+                <div key={ev.id} style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
+                  <div style={{ fontSize: 12, color: '#999' }}>{new Date().toLocaleTimeString()}</div>
+                  <div style={{ fontWeight: 700 }}>{ev.type}</div>
+                  {ev.type === 'EventCreated' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>orgId: {ev.orgId}</div>
+                      <div>goal: {ev.goal}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'PhaseChanged' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>oldPhase: {ev.oldPhase} → newPhase: {ev.newPhase}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'FundsRaised' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>totalRaised: {ev.totalRaised}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'EvidenceSubmitted' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>evidenceCID: {ev.evidenceCID}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'VerifiedSet' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>verified: {String(ev.verified)}</div>
+                      <div>perStream: [{ev.perStream?.join(', ')}]</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'PledgeCreated' && (
+                    <div>
+                      <div>pledgeId: {ev.pledgeId}</div>
+                      <div>donor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.donor)}</span></div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>amount: {ev.amount}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'PledgeWithdrawn' && (
+                    <div>
+                      <div>pledgeId: {ev.pledgeId}</div>
+                      <div>donor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.donor)}</span></div>
+                      <div>amount: {ev.amount}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
