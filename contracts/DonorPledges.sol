@@ -5,6 +5,8 @@ import "./SGDCoin.sol";
 import "./Registry.sol";
 import "./EscrowVault.sol";
 import "./DonorRegistry.sol";
+import "./Oracle.sol";
+import "./CharityEvent.sol";
 
 /**
  * @title DonorPledges
@@ -167,6 +169,19 @@ contract DonorPledges is Registry {
             _eventId,
             _amount
         );
+
+        // Find the CharityEvent contract and notify it of the new funds
+        address oracleAddr = governance.getContractAddress("Oracle");
+        
+        if (oracleAddr != address(0)) {
+            // Get the modules struct from the Oracle
+            (address donor, address attestor, address charity) = Oracle(oracleAddr).modules(_eventId);
+
+            // Call updateRaised on the CharityEvent contract
+            if (charity != address(0)) {
+                CharityEvent(charity).updateRaised(_amount);
+            }
+        }
 
         emit PledgeCreated(
             pledgeCounter,
