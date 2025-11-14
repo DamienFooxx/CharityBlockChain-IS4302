@@ -69,7 +69,7 @@ async function main() {
   console.log("EscrowVault deployed:", escrow.target);
 
   const DonorPledges = await hre.ethers.getContractFactory("DonorPledges");
-  const donorPledges = await DonorPledges.deploy(governance.target, sgd.target);
+  const donorPledges = await DonorPledges.deploy(governance.target, sgd.target, donorRegistry.target);
   await donorPledges.waitForDeployment();
   console.log("DonorPledges deployed:", donorPledges.target);
 
