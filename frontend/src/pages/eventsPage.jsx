@@ -18,9 +18,9 @@ export default function EventsPage() {
   const [beneficiaryTreasury, setBeneficiaryTreasury] = useState(null);
   const [isApproved, setIsApproved] = useState(false);
 
-  // Event data
-  const [eventAddress, setEventAddress] = useState(null);
-  const [eventId, setEventId] = useState(null);
+  // Event data - now supports multiple events
+  const [eventsList, setEventsList] = useState([]); // Array of {eventNumber, address, eventId}
+  const [selectedEventNum, setSelectedEventNum] = useState(1); // Which event to view/interact with
   const [eventSummary, setEventSummary] = useState(null);
 
   // Create form
@@ -30,10 +30,12 @@ export default function EventsPage() {
 
   // Evidence form
   const [evidenceCID, setEvidenceCID] = useState("");
+  const [evidenceEventNum, setEvidenceEventNum] = useState(1);
 
   // Donor pledge form (uses local wallet index 1 by default)
   const [donorIndex, setDonorIndex] = useState(1);
   const [pledgeAmount, setPledgeAmount] = useState("50");
+  const [pledgeEventNum, setPledgeEventNum] = useState(1);
 
   // Event log
   const [events, setEvents] = useState([]);
@@ -120,9 +122,13 @@ export default function EventsPage() {
       setStatus("Tx sent: " + ctr.deploymentTransaction().hash);
       const deployed = await ctr.waitForDeployment();
       const addr = deployed.target;
-      setEventAddress(addr);
-      setEventId(evId);
-      setStatus("Event deployed at " + addr);
+      
+      // Add to events list
+      const nextEventNum = eventsList.length + 1;
+      setEventsList([...eventsList, { eventNumber: nextEventNum, address: addr, eventId: evId }]);
+      setSelectedEventNum(nextEventNum);
+      
+      setStatus(`Event ${nextEventNum} deployed at ${addr}`);
       await refreshSummary(addr);
     } catch (e) {
       setStatus("Deploy failed: " + (e.message || e));
@@ -131,8 +137,13 @@ export default function EventsPage() {
 
   async function refreshSummary(addressOverride) {
     try {
+      const eventToLoad = addressOverride || getSelectedEvent()?.address;
+      if (!eventToLoad) {
+        setEventSummary(null);
+        return;
+      }
       const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const ev = new ethers.Contract(addressOverride || eventAddress, CharityEventArtifact.abi, provider);
+      const ev = new ethers.Contract(eventToLoad, CharityEventArtifact.abi, provider);
       const s = await ev.getEventSummary();
       // decode tuple into readable object
       setEventSummary({
@@ -149,10 +160,19 @@ export default function EventsPage() {
     }
   }
 
+  function getSelectedEvent() {
+    return eventsList.find(e => e.eventNumber === selectedEventNum);
+  }
+
+  function getEventByNumber(num) {
+    return eventsList.find(e => e.eventNumber === num);
+  }
+
   async function closeFunding() {
-    if (!eventAddress) return setStatus("Deploy an event first");
+    const event = getSelectedEvent();
+    if (!event) return setStatus(`Event ${selectedEventNum} not deployed yet`);
     try {
-      const ev = new ethers.Contract(eventAddress, CharityEventArtifact.abi, charityWallet);
+      const ev = new ethers.Contract(event.address, CharityEventArtifact.abi, charityWallet);
       const tx = await ev.closeFunding();
       setStatus("closeFunding tx: " + tx.hash);
       await tx.wait();
@@ -163,22 +183,26 @@ export default function EventsPage() {
   }
 
   async function submitEvidence() {
-    if (!eventAddress) return setStatus("Deploy an event first");
+    const event = getEventByNumber(evidenceEventNum);
+    if (!event) return setStatus(`Event ${evidenceEventNum} not deployed yet`);
     if (!evidenceCID) return setStatus("Provide evidence CID");
     try {
-      const ev = new ethers.Contract(eventAddress, CharityEventArtifact.abi, charityWallet);
+      const ev = new ethers.Contract(event.address, CharityEventArtifact.abi, charityWallet);
       const tx = await ev.submitEvidence(evidenceCID);
       setStatus("submitEvidence tx: " + tx.hash);
       await tx.wait();
-      await refreshSummary();
+      if (evidenceEventNum === selectedEventNum) {
+        await refreshSummary();
+      }
     } catch (e) {
       setStatus("submitEvidence failed: " + (e.message || e));
     }
   }
 
   async function donorApproveAndPledge() {
-    if (!eventId) {
-      return setStatus("Deploy an event first (need eventId)");
+    const event = getEventByNumber(pledgeEventNum);
+    if (!event) {
+      return setStatus(`Event ${pledgeEventNum} not deployed yet`);
     }
     
     try {
@@ -231,13 +255,15 @@ export default function EventsPage() {
       const currentNonce = await provider.getTransactionCount(donorAddr, 'latest');
       
       // create pledge with explicit nonce
-      tx = await pledges.createPledge(eventId, amountWei, { nonce: currentNonce });
+      tx = await pledges.createPledge(event.eventId, amountWei, { nonce: currentNonce });
       setStatus("createPledge tx sent: " + tx.hash);
       
       await tx.wait();
-      setStatus("Pledge confirmed!");
+      setStatus(`Pledge to Event ${pledgeEventNum} confirmed!`);
       
-      await refreshSummary();
+      if (pledgeEventNum === selectedEventNum) {
+        await refreshSummary();
+      }
     } catch (e) {
       setStatus("Pledge failed: " + (e.message || e));
     }
@@ -275,24 +301,24 @@ export default function EventsPage() {
 
     const cleanupFunctions = [];
 
-    // Listen to CharityEvent events (if eventAddress is set)
-    if (eventAddress) {
-      const ev = new ethers.Contract(eventAddress, CharityEventArtifact.abi, provider);
+    // Listen to all deployed CharityEvent contracts
+    eventsList.forEach((eventItem) => {
+      const ev = new ethers.Contract(eventItem.address, CharityEventArtifact.abi, provider);
       
       const onEventCreated = (evId, orgId, fundingGoal, deadline, event) => {
-        pushEvent({ id: Date.now() + Math.random(), type: 'EventCreated', eventId: evId, orgId: Number(orgId), goal: fundingGoal.toString(), deadline: deadline.toString(), tx: event.transactionHash });
+        pushEvent({ id: Date.now() + Math.random(), type: 'EventCreated', eventNum: eventItem.eventNumber, eventId: evId, orgId: Number(orgId), goal: fundingGoal.toString(), deadline: deadline.toString(), tx: event.transactionHash });
       };
       const onPhaseChanged = (evId, oldPhase, newPhase, event) => {
-        pushEvent({ id: Date.now() + Math.random(), type: 'PhaseChanged', eventId: evId, oldPhase: Number(oldPhase), newPhase: Number(newPhase), tx: event.transactionHash });
+        pushEvent({ id: Date.now() + Math.random(), type: 'PhaseChanged', eventNum: eventItem.eventNumber, eventId: evId, oldPhase: Number(oldPhase), newPhase: Number(newPhase), tx: event.transactionHash });
       };
       const onFundsRaised = (evId, totalRaised, event) => {
-        pushEvent({ id: Date.now() + Math.random(), type: 'FundsRaised', eventId: evId, totalRaised: totalRaised.toString(), tx: event.transactionHash });
+        pushEvent({ id: Date.now() + Math.random(), type: 'FundsRaised', eventNum: eventItem.eventNumber, eventId: evId, totalRaised: totalRaised.toString(), tx: event.transactionHash });
       };
       const onEvidenceSubmitted = (evId, evidenceCID, event) => {
-        pushEvent({ id: Date.now() + Math.random(), type: 'EvidenceSubmitted', eventId: evId, evidenceCID, tx: event.transactionHash });
+        pushEvent({ id: Date.now() + Math.random(), type: 'EvidenceSubmitted', eventNum: eventItem.eventNumber, eventId: evId, evidenceCID, tx: event.transactionHash });
       };
       const onVerifiedSet = (evId, verified, perStream, event) => {
-        pushEvent({ id: Date.now() + Math.random(), type: 'VerifiedSet', eventId: evId, verified, perStream: perStream.map(String), tx: event.transactionHash });
+        pushEvent({ id: Date.now() + Math.random(), type: 'VerifiedSet', eventNum: eventItem.eventNumber, eventId: evId, verified, perStream: perStream.map(String), tx: event.transactionHash });
       };
 
       try { ev.on('EventCreated', onEventCreated); } catch (e) {}
@@ -308,7 +334,7 @@ export default function EventsPage() {
         try { ev.off('EvidenceSubmitted', onEvidenceSubmitted); } catch (e) {}
         try { ev.off('VerifiedSet', onVerifiedSet); } catch (e) {}
       });
-    }
+    });
 
     // Listen to DonorPledges events
     if (addresses.DonorPledges) {
@@ -334,7 +360,13 @@ export default function EventsPage() {
       cleanupFunctions.forEach(fn => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventAddress]);
+  }, [eventsList]);
+
+  // Auto-refresh summary when selected event changes
+  useEffect(() => {
+    refreshSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEventNum]);
 
   return (
     <div style={{ padding: 20 }}>
@@ -368,19 +400,40 @@ export default function EventsPage() {
       </section>
 
       <section style={{ marginBottom: 12 }}>
-        <h3>Event Summary</h3>
-        <div>Event Address: <code>{eventAddress || "n/a"}</code></div>
-        <div>EventId (bytes32): <code>{eventId || "n/a"}</code></div>
-        {eventSummary ? (
-          <div style={{ marginTop: 8 }}>
-            <div>phase: {String(eventSummary.phase)}</div>
-            <div>goal: {fmt(eventSummary.goal)}</div>
-            <div>raised: {fmt(eventSummary.raised)}</div>
-            <div>beneficiary: <code>{eventSummary.beneficiary}</code></div>
-            <div>verified: {String(eventSummary.verified)}</div>
-          </div>
+        <h3>Event Summary for Event {selectedEventNum}</h3>
+        <div style={{ marginBottom: 8 }}>
+          <label>Select Event: 
+            <input 
+              type="number" 
+              min="1" 
+              value={selectedEventNum} 
+              onChange={(e) => setSelectedEventNum(Number(e.target.value))}
+              style={{ marginLeft: 8, width: 60 }}
+            />
+          </label>
+        </div>
+        {getSelectedEvent() ? (
+          <>
+            <div>Event Address: <code>{getSelectedEvent().address}</code></div>
+            <div>EventId (bytes32): <code>{short(getSelectedEvent().eventId)}</code></div>
+            {eventSummary ? (
+              <div style={{ marginTop: 8 }}>
+                <div>phase: {String(eventSummary.phase)}</div>
+                <div>goal: {fmt(eventSummary.goal)}</div>
+                <div>raised: {fmt(eventSummary.raised)}</div>
+                <div>beneficiary: <code>{eventSummary.beneficiary}</code></div>
+                <div>verified: {String(eventSummary.verified)}</div>
+              </div>
+            ) : (
+              <div style={{ color: "#666" }}>Loading summary...</div>
+            )}
+          </>
         ) : (
-          <div style={{ color: "#666" }}>No summary yet</div>
+          <>
+            <div>Event Address: <code>nil</code></div>
+            <div>EventId (bytes32): <code>nil</code></div>
+            <div style={{ color: "#666", marginTop: 8 }}>Event {selectedEventNum} not created yet</div>
+          </>
         )}
         <div style={{ marginTop: 8 }}>
           <button onClick={() => refreshSummary()}>Refresh Summary</button>
@@ -390,8 +443,13 @@ export default function EventsPage() {
 
       <section style={{ marginBottom: 12 }}>
         <h3>Evidence</h3>
-        <div style={{ display: "flex", gap: 8, maxWidth: 600 }}>
-          <input placeholder="Evidence CID (ipfs://...)" value={evidenceCID} onChange={(e) => setEvidenceCID(e.target.value)} />
+        <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <label>Event Number
+            <input type="number" min="1" value={evidenceEventNum} onChange={(e) => setEvidenceEventNum(Number(e.target.value))} />
+          </label>
+          <label>Evidence CID
+            <input placeholder="ipfs://..." value={evidenceCID} onChange={(e) => setEvidenceCID(e.target.value)} />
+          </label>
           <button onClick={submitEvidence}>Submit Evidence (charity)</button>
         </div>
       </section>
@@ -399,6 +457,9 @@ export default function EventsPage() {
       <section>
         <h3>Donor Pledge (Demo)</h3>
         <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <label>Event Number to pledge to
+            <input type="number" min="1" value={pledgeEventNum} onChange={(e) => setPledgeEventNum(Number(e.target.value))} />
+          </label>
           <label>Donor wallet index
             <input type="number" min="1" value={donorIndex} onChange={(e) => setDonorIndex(Number(e.target.value))} />
           </label>
@@ -425,6 +486,7 @@ export default function EventsPage() {
                   <div style={{ fontWeight: 700 }}>{ev.type}</div>
                   {ev.type === 'EventCreated' && (
                     <div>
+                      <div>Event #{ev.eventNum}</div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>orgId: {ev.orgId}</div>
                       <div>goal: {ev.goal}</div>
@@ -433,6 +495,7 @@ export default function EventsPage() {
                   )}
                   {ev.type === 'PhaseChanged' && (
                     <div>
+                      <div>Event #{ev.eventNum}</div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>oldPhase: {ev.oldPhase} → newPhase: {ev.newPhase}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
@@ -440,6 +503,7 @@ export default function EventsPage() {
                   )}
                   {ev.type === 'FundsRaised' && (
                     <div>
+                      <div>Event #{ev.eventNum}</div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>totalRaised: {ev.totalRaised}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
@@ -447,6 +511,7 @@ export default function EventsPage() {
                   )}
                   {ev.type === 'EvidenceSubmitted' && (
                     <div>
+                      <div>Event #{ev.eventNum}</div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>evidenceCID: {ev.evidenceCID}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
@@ -454,6 +519,7 @@ export default function EventsPage() {
                   )}
                   {ev.type === 'VerifiedSet' && (
                     <div>
+                      <div>Event #{ev.eventNum}</div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>verified: {String(ev.verified)}</div>
                       <div>perStream: [{ev.perStream?.join(', ')}]</div>

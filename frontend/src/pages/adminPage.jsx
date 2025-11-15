@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import addresses from "../config/addresses.json";
 import CharityRegistryArtifact from "../abi/CharityRegistry.json";
+import CharityTreasuryArtifact from "../abi/CharityTreasury.json";
 import { getWallets } from "../utils/wallets";
 
 export default function AdminPage() {
@@ -40,13 +41,33 @@ export default function AdminPage() {
     try {
       const provider = new ethers.JsonRpcProvider(rpcUrl);
       const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, provider);
+      const treasury = new ethers.Contract(addresses.CharityTreasury, CharityTreasuryArtifact.abi, provider);
+      
       const total = Number(await registry.totalRegistered().catch(() => 0));
       const list = [];
       const max = Math.min(total, 50);
       for (let i = 1; i <= max; i++) {
         try {
           const p = await registry.profiles(i);
-          list.push({ orgId: i, name: p.name, registrant: p.registrant, approved: p.approved, treasury: p.treasury });
+          // Check if treasury account exists in CharityTreasury contract
+          let treasuryExists = false;
+          let treasuryOwner = null;
+          try {
+            const t = await treasury.treasuries(i);
+            treasuryOwner = t.owner;
+            treasuryExists = treasuryOwner && treasuryOwner !== ethers.ZeroAddress;
+          } catch (e) {
+            // ignore
+          }
+          list.push({ 
+            orgId: i, 
+            name: p.name, 
+            registrant: p.registrant, 
+            approved: p.approved, 
+            treasury: p.treasury,
+            treasuryExists,
+            treasuryOwner
+          });
         } catch (e) {
           // ignore individual fetch errors
         }
@@ -75,48 +96,52 @@ export default function AdminPage() {
   async function setOrgTreasury(orgId, treasuryAddr) {
     if (!adminWallet) return setStatus('Admin wallet not loaded');
     if (!treasuryAddr || treasuryAddr.length === 0) return setStatus('Provide a treasury address');
-    setStatus('Assigning treasury for org #' + orgId + '...');
+    setStatus('Assigning treasury contract pointer for org #' + orgId + '...');
     try {
       const registry = new ethers.Contract(addresses.CharityRegistry, CharityRegistryArtifact.abi, adminWallet);
       const tx = await registry.setTreasury(orgId, treasuryAddr);
       setStatus('Tx sent: ' + tx.hash);
       await tx.wait();
-      setStatus('Treasury assigned for org #' + orgId);
+      setStatus('Treasury contract pointer assigned for org #' + orgId);
       await loadRegistrySummary();
-      // After assigning the registry pointer, attempt to initialize the treasury contract
-      try {
-        // fetch registrant for this orgId
-        const profile = await registry.profiles(orgId);
-        const registrant = profile.registrant;
-        if (registrant && registrant !== ethers.ZeroAddress) {
-          setStatus((s) => (s ? s + ' | Initializing treasury...' : 'Initializing treasury...'));
-          const treasuryAbi = [{ "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" }], "name": "createTreasury", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
-            { "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" }], "name": "treasuries", "outputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "uint256", "name": "totalBalance", "type": "uint256" },{ "internalType": "uint256", "name": "availableBalance", "type": "uint256" },{ "internalType": "uint256", "name": "lockedBalance", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" },{ "internalType": "bool", "name": "active", "type": "bool" },{ "internalType": "uint256", "name": "lastActivity", "type": "uint256" }], "stateMutability": "view", "type": "function" }];
-          const contract = new ethers.Contract(treasuryAddr, treasuryAbi, adminWallet);
-          // check whether treasury already exists
-          try {
-            const existing = await contract.treasuries(BigInt(orgId));
-            const owner = existing[4];
-            if (owner && owner !== ethers.ZeroAddress) {
-              setStatus('Treasury already exists for org ' + orgId + ' (owner: ' + owner + ')');
-              return;
-            }
-          } catch (e) {
-            // ignore view error and continue to attempt creation
-          }
-          const tx2 = await contract.createTreasury(BigInt(orgId), registrant);
-          setStatus('createTreasury tx sent: ' + tx2.hash);
-          await tx2.wait();
-          setStatus('Treasury created for org ' + orgId);
-          await loadRegistrySummary();
-        }
-      } catch (err2) {
-        // Non-fatal: report but don't treat as blocking
-        setStatus((s) => (s ? s + ' | createTreasury failed: ' + (err2.message || err2) : 'createTreasury failed: ' + (err2.message || err2)));
-      }
     } catch (e) {
       setStatus('Set treasury failed: ' + (e.message || e));
     }
+  }
+
+  async function createTreasuryAccount(orgId, registrant) {
+    if (!adminWallet) return setStatus('Admin wallet not loaded');
+    if (!registrant || registrant === ethers.ZeroAddress) return setStatus('Invalid registrant address');
+    
+    setStatus('Creating treasury account for org #' + orgId + '...');
+    try {
+      const treasury = new ethers.Contract(addresses.CharityTreasury, CharityTreasuryArtifact.abi, adminWallet);
+      
+      // Check if treasury already exists
+      try {
+        const existing = await treasury.treasuries(BigInt(orgId));
+        const owner = existing.owner;
+        if (owner && owner !== ethers.ZeroAddress) {
+          setStatus('Treasury account already exists for org ' + orgId + ' (owner: ' + owner + ')');
+          return;
+        }
+      } catch (e) {
+        // Continue if view call fails
+      }
+      
+      const tx = await treasury.createTreasury(BigInt(orgId), registrant);
+      setStatus('createTreasury tx sent: ' + tx.hash);
+      await tx.wait();
+      setStatus('Treasury account created for org ' + orgId + ' with owner ' + registrant);
+      await loadRegistrySummary();
+    } catch (e) {
+      setStatus('createTreasury failed: ' + (e.message || e));
+    }
+  }
+
+  async function useDeployedTreasury(orgId) {
+    // Automatically set the treasury pointer to the deployed CharityTreasury contract
+    setOrgTreasury(orgId, addresses.CharityTreasury);
   }
 
   // Event listeners
@@ -173,60 +198,52 @@ export default function AdminPage() {
                     <div>
                       <div><strong>#{r.orgId}</strong> {r.name || '(no name)'}</div>
                       <div style={{ fontFamily: 'monospace', fontSize: 12 }}>registrant: {r.registrant}</div>
-                      <div>approved: {String(r.approved)} treasury: {r.treasury}</div>
+                      <div style={{ fontSize: 12 }}>
+                        <span>approved: {String(r.approved)}</span>
+                        {' | '}
+                        <span>treasury ptr: {r.treasury === ethers.ZeroAddress || !r.treasury ? 'not set' : '✓'}</span>
+                        {' | '}
+                        <span>treasury account: {r.treasuryExists ? '✓ created' : 'not created'}</span>
+                      </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <div>
-                        <button onClick={() => approveOrg(r.orgId)} disabled={r.approved}>Approve</button>
+                        <button onClick={() => approveOrg(r.orgId)} disabled={r.approved}>
+                          {r.approved ? '✓ Approved' : 'Approve Charity'}
+                        </button>
                       </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <input id={`treasury-${r.orgId}`} placeholder="treasury address" defaultValue={r.treasury || ''} style={{ flex: 1 }} />
-                        <button onClick={() => {
-                          const el = document.getElementById(`treasury-${r.orgId}`);
-                          if (!el) return setStatus('Input missing');
-                          const val = el.value.trim();
-                          setOrgTreasury(r.orgId, val);
-                        }}>Set Treasury</button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button 
+                          onClick={() => useDeployedTreasury(r.orgId)}
+                          disabled={r.treasury === addresses.CharityTreasury}
+                          style={{ flex: 1 }}
+                          title="Set treasury pointer to deployed CharityTreasury contract"
+                        >
+                          {r.treasury === addresses.CharityTreasury ? '✓ Pointer Set' : 'Set Treasury Pointer'}
+                        </button>
                       </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 12, color: '#666' }}>OrgId: {r.orgId}</div>
-                          <div style={{ fontSize: 12, color: '#666' }}>Owner: <span style={{ fontFamily: 'monospace' }}>{r.registrant}</span></div>
-                        </div>
-                        <div>
-                          {/* Only allow Create Treasury if admin has assigned a treasury contract in the registry */}
-                          {r.treasury && r.treasury !== ethers.ZeroAddress ? (
-                            <button onClick={async () => {
-                              if (!adminWallet) return setStatus('Admin wallet not loaded');
-                              try {
-                                setStatus('Creating treasury on ' + r.treasury + ' for org ' + r.orgId + '...');
-                                const treasuryAbi = [{ "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" }], "name": "createTreasury", "outputs": [], "stateMutability": "nonpayable", "type": "function" },
-                                  { "inputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" }], "name": "treasuries", "outputs": [{ "internalType": "uint256", "name": "orgId", "type": "uint256" },{ "internalType": "uint256", "name": "totalBalance", "type": "uint256" },{ "internalType": "uint256", "name": "availableBalance", "type": "uint256" },{ "internalType": "uint256", "name": "lockedBalance", "type": "uint256" },{ "internalType": "address", "name": "owner", "type": "address" },{ "internalType": "bool", "name": "active", "type": "bool" },{ "internalType": "uint256", "name": "lastActivity", "type": "uint256" }], "stateMutability": "view", "type": "function" }];
-                                const contract = new ethers.Contract(r.treasury, treasuryAbi, adminWallet);
-                                // check whether treasury already exists
-                                try {
-                                  const existing = await contract.treasuries(BigInt(r.orgId));
-                                  const owner = existing[4];
-                                  if (owner && owner !== ethers.ZeroAddress) {
-                                    setStatus('Treasury already exists for org ' + r.orgId + ' (owner: ' + owner + ')');
-                                    return;
-                                  }
-                                } catch (e) {
-                                  // ignore view error and continue to attempt creation
-                                }
-                                const tx = await contract.createTreasury(BigInt(r.orgId), r.registrant);
-                                setStatus('Tx sent: ' + tx.hash);
-                                await tx.wait();
-                                setStatus('Treasury created for org ' + r.orgId);
-                                await loadRegistrySummary();
-                              } catch (err) {
-                                setStatus('createTreasury failed: ' + (err.message || err));
-                              }
-                            }}>Create Treasury</button>
-                          ) : (
-                            <button disabled title="Assign a treasury contract in the registry first">Create Treasury</button>
-                          )}
-                        </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button 
+                          onClick={() => createTreasuryAccount(r.orgId, r.registrant)}
+                          disabled={r.treasuryExists || r.treasury !== addresses.CharityTreasury}
+                          style={{ flex: 1 }}
+                          title={
+                            r.treasuryExists 
+                              ? 'Treasury account already created' 
+                              : r.treasury !== addresses.CharityTreasury 
+                                ? 'Set treasury pointer first' 
+                                : 'Create treasury account in CharityTreasury contract'
+                          }
+                        >
+                          {r.treasuryExists ? '✓ Account Created' : 'Create Treasury Account'}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#666', padding: '4px 0' }}>
+                        <div>OrgId: {r.orgId}</div>
+                        <div>Owner: {r.registrant?.slice(0, 10)}...{r.registrant?.slice(-8)}</div>
+                        {r.treasuryExists && r.treasuryOwner && (
+                          <div>Treasury Owner: {r.treasuryOwner?.slice(0, 10)}...{r.treasuryOwner?.slice(-8)}</div>
+                        )}
                       </div>
                     </div>
                   </div>
