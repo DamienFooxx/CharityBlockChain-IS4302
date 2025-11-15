@@ -436,17 +436,28 @@ export default function VotingPage() {
       console.log("Modules verified successfully");
       setStatus(`Modules verified - Donor: ${short(modules.donor)}, Attestor: ${short(modules.attestor)}`);
       
-      const now = Math.floor(Date.now() / 1000);
-      const commit = now + 60;
-      const reveal = commit + 60;
+      // CRITICAL: Use blockchain timestamp, NOT system time
+      // System time can be ahead of blockchain time causing "Commit in past" error
+      const latestBlock = await provider.getBlock('latest');
+      const blockTime = Number(latestBlock.timestamp);
+      const systemTime = Math.floor(Date.now() / 1000);
+      
+      console.log("Time check:");
+      console.log("  Blockchain timestamp:", blockTime);
+      console.log("  System time:", systemTime);
+      console.log("  Difference (system - blockchain):", systemTime - blockTime, "seconds");
+      
+      // Use blockchain time + buffer
+      const commit = blockTime + 120;  // 2 minutes from blockchain time
+      const reveal = commit + 120;     // 4 minutes total
       const commit2 = commit;
       const reveal2 = reveal;
       
-      console.log("Calculated deadlines:");
-      console.log("  donorCommit:", commit);
-      console.log("  donorReveal:", reveal);
-      console.log("  attestorCommit:", commit2);
-      console.log("  attestorReveal:", reveal2);
+      console.log("Calculated deadlines (using blockchain time):");
+      console.log("  donorCommit:", commit, `(+${commit - blockTime}s from now)`);
+      console.log("  donorReveal:", reveal, `(+${reveal - blockTime}s from now)`);
+      console.log("  attestorCommit:", commit2, `(+${commit2 - blockTime}s from now)`);
+      console.log("  attestorReveal:", reveal2, `(+${reveal2 - blockTime}s from now)`);
       
       setStatus(`Setting deadlines: commit=${commit}, reveal=${reveal}...`);
       console.log("Calling oracle.setDeadlines...");
@@ -529,7 +540,21 @@ export default function VotingPage() {
       const oracle = await oracleContract();
       const tx = await oracle.assignVoter(eventId, donorAddress, Number(stream));
       setStatus(`Assigning ${short(donorAddress)} to stream ${stream}...`);
-      await tx.wait();
+      const receipt = await tx.wait();
+      
+      // Log the event
+      setEvents((prev) => [
+        {
+          id: Date.now() + Math.random(),
+          type: 'DonorAssigned',
+          eventId: eventId,
+          donor: donorAddress,
+          stream: stream,
+          tx: tx.hash,
+        },
+        ...prev,
+      ]);
+      
       setStatus(`✓ Assigned donor ${short(donorAddress)} to stream ${stream}`);
     } catch (e) {
       setStatus(`Failed to assign ${short(donorAddress)}: ` + (e.message || e));
@@ -537,18 +562,54 @@ export default function VotingPage() {
   }
 
   async function doAssignAttestor() {
-    if (!eventId || !attestorVotingAddr) return setStatus("Set event & attestorVoting");
+    console.log("\n=== ASSIGN ATTESTOR START ===");
+    console.log("eventId:", eventId);
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("assignAttestorIndex:", assignAttestorIndex);
+    console.log("assignAttestorStream:", assignAttestorStream);
+    
+    if (!eventId || !attestorVotingAddr) {
+      console.error("FAILED: Missing eventId or attestorVotingAddr");
+      return setStatus("Set event & attestorVoting");
+    }
+    
     const wallet = wallets[assignAttestorIndex];
-    if (!wallet) return setStatus("No wallet at index " + assignAttestorIndex);
+    if (!wallet) {
+      console.error("FAILED: No wallet at index", assignAttestorIndex);
+      return setStatus("No wallet at index " + assignAttestorIndex);
+    }
+    
     try {
       const oracle = await oracleContract();
       const addr = await wallet.getAddress();
+      console.log("Attestor address:", addr);
+      
+      // Check if attestor is registered in AttestorRegistry
+      const registry = new ethers.Contract(addresses.AttestorRegistry, AttestorRegistryArtifact.abi, provider);
+      const isRegistered = await registry.isRegistered(addr);
+      console.log("Is registered in AttestorRegistry:", isRegistered);
+      
+      if (!isRegistered) {
+        console.error("FAILED: Attestor not registered!");
+        return setStatus(`Attestor ${short(addr)} is NOT registered. Please register them first on the Attestors page.`);
+      }
+      
+      console.log("Calling oracle.assignAttestor()...");
       const tx = await oracle.assignAttestor(eventId, addr, Number(assignAttestorStream));
+      console.log("Assign tx hash:", tx.hash);
       setStatus("assignAttestor tx: " + tx.hash);
+      
       await tx.wait();
-      setStatus(`Assigned attestor ${short(addr)} to stream ${assignAttestorStream}`);
+      console.log("✓ Assignment confirmed");
+      setStatus(`✓ Assigned attestor ${short(addr)} to stream ${assignAttestorStream}`);
+      
+      console.log("=== ASSIGN ATTESTOR SUCCESS ===\n");
     } catch (e) {
-      setStatus("assignAttestor failed: " + (e.message || e));
+      console.error("=== ASSIGN ATTESTOR FAILED ===");
+      console.error("Error:", e);
+      console.error("Error message:", e.message);
+      console.error("Error reason:", e.reason);
+      setStatus("assignAttestor failed: " + (e.reason || e.message || e));
     }
   }
 
@@ -655,77 +716,250 @@ export default function VotingPage() {
     }
   }
 
-  async function donorReveal(index) {
+  async function donorReveal() {
     if (!donorVotingAddr) return setStatus("DonorVoting address missing");
-    const wallet = wallets[index];
-    if (!wallet) return setStatus("No wallet at index " + index);
-    const data = saltCache[index];
-    if (!data) return setStatus("No cached commit for donor " + index);
-    try {
-      const contract = new ethers.Contract(donorVotingAddr, DonorVotingArtifact.abi, wallet);
-      const tx = await contract.reveal(data.choice, data.salt);
-      setStatus("reveal tx: " + tx.hash);
-      await tx.wait();
-      setStatus(`Reveal confirmed for donor ${index}`);
-      await refreshDonorPhase();
-      await refreshOverall();
-    } catch (e) {
-      setStatus("Reveal failed: " + (e.message || e));
+    
+    // Get all cached donor commits
+    const cachedDonors = Object.keys(saltCache).map(Number);
+    if (cachedDonors.length === 0) {
+      return setStatus("No cached donor commits to reveal");
     }
+    
+    setStatus(`Revealing votes for ${cachedDonors.length} donors...`);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const index of cachedDonors) {
+      const wallet = wallets[index];
+      if (!wallet) {
+        console.warn(`No wallet at index ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      const data = saltCache[index];
+      if (!data) {
+        console.warn(`No cached commit for donor ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      try {
+        const contract = new ethers.Contract(donorVotingAddr, DonorVotingArtifact.abi, wallet);
+        const tx = await contract.reveal(data.choice, data.salt);
+        await tx.wait();
+        successCount++;
+        setStatus(`Revealed ${successCount}/${cachedDonors.length} donors...`);
+      } catch (e) {
+        console.error(`Failed to reveal donor ${index}:`, e);
+        failCount++;
+      }
+    }
+    
+    setStatus(`✓ Revealed ${successCount} donors (${failCount} failed)`);
+    await refreshDonorPhase();
+    await refreshOverall();
   }
 
   async function attestorCommit() {
-    if (!attestorVotingAddr) return setStatus("AttestorVoting address missing");
+    console.log("\n=== ATTESTOR COMMIT START ===");
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("commitAttestorIndex:", commitAttestorIndex);
+    console.log("commitAttestorChoice:", commitAttestorChoice);
+    console.log("attestorStake:", attestorStake);
+    
+    if (!attestorVotingAddr) {
+      console.error("FAILED: AttestorVoting address missing");
+      return setStatus("AttestorVoting address missing");
+    }
+    
     const wallet = wallets[commitAttestorIndex];
-    if (!wallet) return setStatus("No wallet at index " + commitAttestorIndex);
+    if (!wallet) {
+      console.error("FAILED: No wallet at index", commitAttestorIndex);
+      return setStatus("No wallet at index " + commitAttestorIndex);
+    }
+    
+    const walletAddr = await wallet.getAddress();
+    console.log("Attestor wallet address:", walletAddr);
+    
     try {
+      // Check SGD balance
+      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, wallet);
+      const balance = await sgd.balanceOf(walletAddr);
+      console.log("SGD balance:", ethers.formatUnits(balance, 18), "SGD");
+      
       const stakeWei = ethers.parseUnits(attestorStake, 18);
+      console.log("Stake amount (wei):", stakeWei.toString());
+      console.log("Stake amount (SGD):", attestorStake);
+      
+      if (balance < stakeWei) {
+        console.error("INSUFFICIENT BALANCE!");
+        console.error(`Need ${ethers.formatUnits(stakeWei, 18)} SGD, but only have ${ethers.formatUnits(balance, 18)} SGD`);
+        return setStatus(`Insufficient SGD balance! Need ${ethers.formatUnits(stakeWei, 18)} SGD, have ${ethers.formatUnits(balance, 18)} SGD`);
+      }
+      
+      // Check if attestor is assigned to a stream
+      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+      const isAssigned = await contract.isAssigned(walletAddr);
+      console.log("Is assigned to stream:", isAssigned);
+      
+      if (!isAssigned) {
+        console.error("FAILED: Attestor not assigned to any stream!");
+        return setStatus("Attestor must be assigned to a stream before committing. Use 'Assign Attestor' first.");
+      }
+      
+      const assignedStream = await contract.assignedStream(walletAddr);
+      console.log("Assigned to stream:", Number(assignedStream));
+      
+      // Check attestor phase
+      const phase = await contract.phase();
+      console.log("AttestorVoting phase:", Number(phase), "(0=Pending, 1=Commit, 2=Reveal, 3=Finalized)");
+      
+      if (Number(phase) !== 1) {
+        console.error("FAILED: Not in Commit phase!");
+        return setStatus(`Cannot commit: Phase is ${Number(phase)} (need phase 1=Commit). Current: ${Number(phase) === 0 ? 'Pending' : Number(phase) === 2 ? 'Reveal' : 'Finalized'}`);
+      }
       
       // First approve SGD token spending
-      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, wallet);
+      console.log("Approving SGD token spending...");
       setStatus("Approving SGD token for staking...");
       const approveTx = await sgd.approve(attestorVotingAddr, stakeWei);
-      await approveTx.wait();
+      console.log("Approve tx hash:", approveTx.hash);
+      const approveReceipt = await approveTx.wait();
+      console.log("Approval confirmed, block:", approveReceipt.blockNumber);
+      
+      // Small delay to ensure nonce is synced (Hardhat local node issue)
+      console.log("Waiting for nonce sync...");
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       // Generate commitment
       const saltHex = ethers.hexlify(ethers.randomBytes(32));
       const saltBig = BigInt(saltHex);
       const choiceBool = commitAttestorChoice === "true";
+      console.log("Generated salt:", saltHex);
+      console.log("Choice (bool):", choiceBool);
+      
       const commitment = ethers.solidityPackedKeccak256(
         ["bool", "uint256"],
         [choiceBool, saltBig]
       );
+      console.log("Generated commitment:", commitment);
       
-      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+      console.log("Calling contract.commit()...");
       setStatus("Committing attestor vote with stake...");
-      const tx = await contract.commit(commitment, stakeWei);
+      
+      // Get fresh nonce to avoid conflicts
+      const currentNonce = await wallet.getNonce();
+      console.log("Using nonce:", currentNonce);
+      
+      const tx = await contract.commit(commitment, stakeWei, { nonce: currentNonce });
+      console.log("Commit tx hash:", tx.hash);
       setStatus("commit tx: " + tx.hash);
-      await tx.wait();
-      setStatus(`Commit stored for attestor ${commitAttestorIndex}, choice=${choiceBool}, stake=${attestorStake} SGD, salt=${saltHex}`);
-      setAttestorSaltCache((prev) => ({
-        ...prev,
-        [commitAttestorIndex]: { choice: choiceBool, salt: saltBig, saltHex, stake: attestorStake },
-      }));
+      
+      console.log("Waiting for transaction confirmation...");
+      const receipt = await tx.wait();
+      console.log("Transaction confirmed!");
+      console.log("Receipt:", receipt);
+      
+      setStatus(`✓ Commit stored for attestor ${commitAttestorIndex}, choice=${choiceBool}, stake=${attestorStake} SGD`);
+      
+      // Cache the commitment data
+      const cacheData = { choice: choiceBool, salt: saltBig, saltHex, stake: attestorStake };
+      console.log("Caching attestor data:", cacheData);
+      setAttestorSaltCache((prev) => {
+        const updated = { ...prev, [commitAttestorIndex]: cacheData };
+        console.log("Updated attestorSaltCache:", updated);
+        return updated;
+      });
+      
+      console.log("=== ATTESTOR COMMIT SUCCESS ===\n");
     } catch (e) {
-      setStatus("Attestor commit failed: " + (e.message || e));
+      console.error("=== ATTESTOR COMMIT FAILED ===");
+      console.error("Error:", e);
+      console.error("Error message:", e.message);
+      console.error("Error reason:", e.reason);
+      setStatus("Attestor commit failed: " + (e.reason || e.message || e));
     }
   }
 
-  async function attestorReveal(index) {
-    if (!attestorVotingAddr) return setStatus("AttestorVoting address missing");
-    const wallet = wallets[index];
-    if (!wallet) return setStatus("No wallet at index " + index);
-    const data = attestorSaltCache[index];
-    if (!data) return setStatus("No cached commit for attestor " + index);
-    try {
-      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
-      const tx = await contract.reveal(data.choice, data.salt);
-      setStatus("reveal tx: " + tx.hash);
-      await tx.wait();
-      setStatus(`Reveal confirmed for attestor ${index}`);
-    } catch (e) {
-      setStatus("Attestor reveal failed: " + (e.message || e));
+  async function attestorReveal() {
+    console.log("\n=== ATTESTOR REVEAL START ===");
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("attestorSaltCache:", attestorSaltCache);
+    
+    if (!attestorVotingAddr) {
+      console.error("FAILED: AttestorVoting address missing");
+      return setStatus("AttestorVoting address missing");
     }
+    
+    // Get all cached attestor commits
+    const cachedAttestors = Object.keys(attestorSaltCache).map(Number);
+    console.log("Cached attestor indices:", cachedAttestors);
+    
+    if (cachedAttestors.length === 0) {
+      console.warn("No cached attestor commits to reveal");
+      return setStatus("No cached attestor commits to reveal");
+    }
+    
+    setStatus(`Revealing votes for ${cachedAttestors.length} attestors...`);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const index of cachedAttestors) {
+      console.log(`\n--- Revealing attestor ${index} ---`);
+      const wallet = wallets[index];
+      if (!wallet) {
+        console.warn(`No wallet at index ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      const walletAddr = await wallet.getAddress();
+      console.log(`Attestor ${index} address:`, walletAddr);
+      
+      const data = attestorSaltCache[index];
+      if (!data) {
+        console.warn(`No cached commit for attestor ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      console.log(`Reveal data - choice: ${data.choice}, salt: ${data.saltHex || data.salt.toString()}`);
+      
+      try {
+        const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+        
+        // Check phase
+        const phase = await contract.phase();
+        console.log(`Phase: ${Number(phase)} (need 2=Reveal)`);
+        
+        if (Number(phase) !== 2) {
+          console.error(`FAILED: Not in Reveal phase! Phase is ${Number(phase)}`);
+          failCount++;
+          continue;
+        }
+        
+        console.log(`Calling contract.reveal(${data.choice}, ${data.salt.toString()})...`);
+        const tx = await contract.reveal(data.choice, data.salt);
+        console.log(`Reveal tx hash for attestor ${index}:`, tx.hash);
+        
+        await tx.wait();
+        console.log(`✓ Reveal confirmed for attestor ${index}`);
+        
+        successCount++;
+        setStatus(`Revealed ${successCount}/${cachedAttestors.length} attestors...`);
+      } catch (e) {
+        console.error(`Failed to reveal attestor ${index}:`);
+        console.error("Error:", e);
+        console.error("Error message:", e.message);
+        console.error("Error reason:", e.reason);
+        failCount++;
+      }
+    }
+    
+    console.log(`\n=== ATTESTOR REVEAL COMPLETE ===`);
+    console.log(`Success: ${successCount}, Failed: ${failCount}`);
+    setStatus(`✓ Revealed ${successCount} attestors (${failCount} failed)`);
   }
 
   async function doSettleAttestors() {
@@ -812,6 +1046,46 @@ export default function VotingPage() {
       });
     }
 
+    // Listen to AttestorVoting events
+    if (attestorVotingAddr) {
+      const av = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, provider);
+      
+      const onAttestorCommitted = (attestor, stream, stake, commitment, event) => {
+        console.log('AttestorVoting Committed event:', { attestor, stream: Number(stream), stake: stake.toString(), commitment });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorCommitted', attestor, stream: Number(stream), stake: stake.toString(), commitment, tx: event.transactionHash });
+      };
+      const onAttestorRevealed = (attestor, stream, choice, stake, event) => {
+        console.log('AttestorVoting Revealed event:', { attestor, stream: Number(stream), choice, stake: stake.toString() });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorRevealed', attestor, stream: Number(stream), choice, stake: stake.toString(), tx: event.transactionHash });
+      };
+      const onAttestorStreamSettled = (stream, outcome, event) => {
+        console.log('AttestorVoting StreamSettled event:', { stream: Number(stream), outcome });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorStreamSettled', stream: Number(stream), outcome, tx: event.transactionHash });
+      };
+      const onAttestorPhaseAdvanced = (newPhase, event) => {
+        console.log('AttestorVoting PhaseAdvanced event:', { newPhase: Number(newPhase) });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorPhaseAdvanced', newPhase: Number(newPhase), tx: event.transactionHash });
+      };
+      const onAttestorClaimed = (attestor, stream, payout, event) => {
+        console.log('AttestorVoting Claimed event:', { attestor, stream: Number(stream), payout: payout.toString() });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorClaimed', attestor, stream: Number(stream), payout: payout.toString(), tx: event.transactionHash });
+      };
+
+      try { av.on('Committed', onAttestorCommitted); } catch (e) { console.error('Failed to listen to Committed:', e); }
+      try { av.on('Revealed', onAttestorRevealed); } catch (e) { console.error('Failed to listen to Revealed:', e); }
+      try { av.on('StreamSettled', onAttestorStreamSettled); } catch (e) { console.error('Failed to listen to StreamSettled:', e); }
+      try { av.on('PhaseAdvanced', onAttestorPhaseAdvanced); } catch (e) { console.error('Failed to listen to PhaseAdvanced:', e); }
+      try { av.on('Claimed', onAttestorClaimed); } catch (e) { console.error('Failed to listen to Claimed:', e); }
+
+      cleanupFunctions.push(() => {
+        try { av.off('Committed', onAttestorCommitted); } catch (e) {}
+        try { av.off('Revealed', onAttestorRevealed); } catch (e) {}
+        try { av.off('StreamSettled', onAttestorStreamSettled); } catch (e) {}
+        try { av.off('PhaseAdvanced', onAttestorPhaseAdvanced); } catch (e) {}
+        try { av.off('Claimed', onAttestorClaimed); } catch (e) {}
+      });
+    }
+
     // Listen to Oracle events
     if (addresses.Oracle && eventId) {
       const oracle = new ethers.Contract(addresses.Oracle, OracleArtifact.abi, provider);
@@ -854,7 +1128,7 @@ export default function VotingPage() {
       cleanupFunctions.forEach(fn => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [donorVotingAddr, eventId]);
+  }, [donorVotingAddr, attestorVotingAddr, eventId]);
 
   return (
     <div style={{ padding: 20 }}>
@@ -893,7 +1167,7 @@ export default function VotingPage() {
       <section style={{ marginBottom: 16 }}>
         <h3>Oracle Setup & Voting Control</h3>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={doSetDeadlines}>Set Deadlines (+60s/+120s)</button>
+          <button onClick={doSetDeadlines}>Set Deadlines (+120s/+240s)</button>
           <button onClick={doAdvanceDonorPhase}>Advance Donor Phase</button>
           <button onClick={doAdvanceAttestorPhase}>Advance Attestor Phase</button>
           <button onClick={doAdvanceBothPhases}>Advance Both Phases</button>
@@ -1253,6 +1527,14 @@ export default function VotingPage() {
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
                     </div>
                   )}
+                  {ev.type === 'DonorAssigned' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>donor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.donor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
                   {ev.type === 'OracleVoterAssigned' && (
                     <div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
@@ -1265,6 +1547,45 @@ export default function VotingPage() {
                     <div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>which: {ev.which}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorCommitted' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>stake: {ev.stake}</div>
+                      <div>commitment: <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{ev.commitment?.substring(0, 16)}...</span></div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorRevealed' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>choice: {String(ev.choice)}</div>
+                      <div>stake: {ev.stake}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorStreamSettled' && (
+                    <div>
+                      <div>stream: {ev.stream}</div>
+                      <div>outcome: {String(ev.outcome)}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorPhaseAdvanced' && (
+                    <div>
+                      <div>newPhase: {ev.newPhase}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorClaimed' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>payout: {ev.payout}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
                     </div>
                   )}
