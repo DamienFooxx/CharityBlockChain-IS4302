@@ -1457,7 +1457,7 @@ it("3d) should confirm funds received from oracle and update balances", async ()
       await eventCtr.connect(charityOwner).submitEvidence("QmEvidence");
 
       await expect(
-        eventCtr.connect(oracle).setVerified(true, [true, true, true])
+        eventCtr.connect(oracle).setVerified(true, [true, true, true], true)
       )
         .to.emit(eventCtr, "VerifiedSet")
         .withArgs(await eventCtr.eventId(), true, [true, true, true]);
@@ -1475,7 +1475,7 @@ it("3d) should confirm funds received from oracle and update balances", async ()
       await eventCtr.connect(charityOwner).closeFunding();
       await eventCtr.connect(charityOwner).submitEvidence("QmEvidence");
 
-      await eventCtr.connect(oracle).setVerified(false, [false, false, false]);
+      await eventCtr.connect(oracle).setVerified(false, [false, false, false], false);
 
       const summaryAfter = await eventCtr.getEventSummary();
 
@@ -1492,7 +1492,7 @@ it("3d) should confirm funds received from oracle and update balances", async ()
       await eventCtr.connect(charityOwner).submitEvidence("QmEvidence");
 
       await expect(
-        eventCtr.connect(user1).setVerified(true, [true, true, true])
+        eventCtr.connect(user1).setVerified(true, [true, true, true], true)
       ).to.be.revertedWith("Not oracle");
     });
 
@@ -1503,7 +1503,7 @@ it("3d) should confirm funds received from oracle and update balances", async ()
 
       await eventCtr.connect(charityOwner).closeFunding();
       await eventCtr.connect(charityOwner).submitEvidence("QmEvidence1");
-      await eventCtr.connect(oracle).setVerified(false, [false, false, false]);
+      await eventCtr.connect(oracle).setVerified(false, [false, false, false], false);
 
       await expect(eventCtr.connect(charityOwner).requestRetry("QmEvidence2"))
         .to.emit(eventCtr, "RetryRequested")
@@ -1529,14 +1529,14 @@ it("3d) should confirm funds received from oracle and update balances", async ()
         // Verify as false
         await eventCtr
           .connect(oracle)
-          .setVerified(false, [false, false, false]);
+          .setVerified(false, [false, false, false], false);
         // Request retry (updates evidence and moves back to VERIFICATION)
         await eventCtr.connect(charityOwner).requestRetry(`QmEvidence${i + 1}`);
         expect(await eventCtr.retryCount()).to.equal(BigInt(i + 1));
       }
 
       // After 3 retries, verify false one more time
-      await eventCtr.connect(oracle).setVerified(false, [false, false, false]);
+      await eventCtr.connect(oracle).setVerified(false, [false, false, false], false);
 
       // Now try 4th retry - should fail (max is 3)
       await expect(
@@ -1672,7 +1672,7 @@ describe("5. Integration Tests", function () {
       expect((await eventCtr.getEventSummary())[2]).to.equal(2n); // VERIFICATION
 
       // Verify
-      await eventCtr.connect(oracle).setVerified(true, [true, true, true]);
+      await eventCtr.connect(oracle).setVerified(true, [true, true, true], true);
       expect((await eventCtr.getEventSummary())[2]).to.equal(3n); // APPROVED
 
       // *** UPDATED PAYOUT FLOW ***
@@ -1746,7 +1746,7 @@ describe("5. Integration Tests", function () {
         await eventCtr.connect(charityOwner).submitEvidence(`QmEvidence${i}`);
         await eventCtr
           .connect(oracle)
-          .setVerified(i % 2 === 0, [i % 2 === 0, i % 2 === 0, i % 2 === 0]);
+          .setVerified(i % 2 === 0, [i % 2 === 0, i % 2 === 0, i % 2 === 0], i % 2 === 0);
         await reputation
           .connect(oracle)
           .updateOnEventOutcome(orgId, await eventCtr.eventId(), i % 2 === 0);

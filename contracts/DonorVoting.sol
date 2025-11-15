@@ -337,7 +337,7 @@ contract DonorVoting {
      */
     function _finalize() internal {
         uint256 quorumRequiredBps = governance.globalQuorumBps(); // Fetch quorum threshold
-        uint256 passMajorityRequiredBps = governance.globalPassMajorityBps(); // <-- Fetch NEW pass threshold
+        uint256 passMajorityRequiredBps = governance.globalPassMajorityBps(); // <-- Fetch pass threshold
         bool _overallPassed = true;
 
         for (uint8 s = 0; s < NUM_STREAMS; s++) {
@@ -359,7 +359,7 @@ contract DonorVoting {
                     uint256 passPercentageBps = (tally.pass * 10000) /
                         tally.totalWeight;
                     bool passThresholdMet = passPercentageBps >=
-                        passMajorityRequiredBps; // <-- USES NEW VARIABLE
+                        passMajorityRequiredBps;
 
                     if (passThresholdMet) {
                         streamPasses = true; // Only passes if BOTH checks are true
