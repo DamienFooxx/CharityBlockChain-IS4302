@@ -177,24 +177,66 @@ export default function EventsPage() {
   }
 
   async function donorApproveAndPledge() {
-    if (!eventId) return setStatus("Deploy an event first (need eventId)");
+    if (!eventId) {
+      return setStatus("Deploy an event first (need eventId)");
+    }
+    
     try {
+      setStatus("Loading donor wallet...");
       const wallets = await getWallets(rpcUrl);
+      
       const donor = wallets[donorIndex];
-      if (!donor) return setStatus("No donor wallet at index " + donorIndex);
+      if (!donor) {
+        return setStatus("No donor wallet at index " + donorIndex);
+      }
+      
+      const donorAddr = await donor.getAddress();
+      setStatus("Donor: " + donorAddr);
+
+      // Check if donor is registered and verified
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const DonorRegistryArtifact = await import("../abi/DonorRegistry.json");
+      const donorReg = new ethers.Contract(addresses.DonorRegistry, DonorRegistryArtifact.default.abi, provider);
+      
+      const isRegistered = await donorReg.isDonorRegistered(donorAddr);
+      if (!isRegistered) {
+        return setStatus(`Donor ${donorAddr} is not registered. Go to Donor page and register first.`);
+      }
+      
+      const isVerified = await donorReg.isDonorVerified(donorAddr);
+      if (!isVerified) {
+        return setStatus(`Donor ${donorAddr} is not verified. Admin must verify on Donor page first.`);
+      }
+
       const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, donor);
       const pledges = new ethers.Contract(addresses.DonorPledges, DonorPledgesArtifact.abi, donor);
 
       const amountWei = await doParseUnits(pledgeAmount);
+
+      // Check balance
+      const balance = await sgd.balanceOf(donorAddr);
+      if (balance < amountWei) {
+        return setStatus(`Insufficient balance. Has ${balance.toString()}, needs ${amountWei.toString()}`);
+      }
+
       // approve DonorPledges to pull
+      setStatus("Approving DonorPledges to spend tokens...");
       let tx = await sgd.approve(addresses.DonorPledges, amountWei);
-      setStatus("approve tx: " + tx.hash);
+      setStatus("Approve tx sent: " + tx.hash);
+      
       await tx.wait();
-      // create pledge
-      tx = await pledges.createPledge(eventId, amountWei);
-      setStatus("createPledge tx: " + tx.hash);
+      setStatus("Approve confirmed, creating pledge...");
+      
+      // Fetch fresh nonce to avoid nonce conflicts after the approve tx
+      const currentNonce = await provider.getTransactionCount(donorAddr, 'latest');
+      
+      // create pledge with explicit nonce
+      tx = await pledges.createPledge(eventId, amountWei, { nonce: currentNonce });
+      setStatus("createPledge tx sent: " + tx.hash);
+      
       await tx.wait();
-      setStatus("Pledge confirmed");
+      setStatus("Pledge confirmed!");
+      
       await refreshSummary();
     } catch (e) {
       setStatus("Pledge failed: " + (e.message || e));
