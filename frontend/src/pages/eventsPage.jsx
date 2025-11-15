@@ -5,6 +5,9 @@ import CharityEventArtifact from "../abi/CharityEvent.json";
 import DonorPledgesArtifact from "../abi/DonorPledges.json";
 import SGDCoinArtifact from "../abi/SGDCoin.json";
 import CharityRegistryArtifact from "../abi/CharityRegistry.json";
+import DonorVotingArtifact from "../abi/DonorVoting.json";
+import AttestorVotingArtifact from "../abi/AttestorVoting.json";
+import OracleArtifact from "../abi/Oracle.json";
 import { getWallets } from "../utils/wallets";
 
 export default function EventsPage() {
@@ -18,10 +21,20 @@ export default function EventsPage() {
   const [beneficiaryTreasury, setBeneficiaryTreasury] = useState(null);
   const [isApproved, setIsApproved] = useState(false);
 
-  // Event data - now supports multiple events
-  const [eventsList, setEventsList] = useState([]); // Array of {eventNumber, address, eventId}
+  // Event data - now supports multiple events with localStorage persistence
+  const [eventsList, setEventsList] = useState(() => {
+    // Load events from localStorage on init
+    try {
+      const stored = localStorage.getItem('charityEvents');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      console.error('Failed to load events from localStorage:', e);
+      return [];
+    }
+  });
   const [selectedEventNum, setSelectedEventNum] = useState(1); // Which event to view/interact with
   const [eventSummary, setEventSummary] = useState(null);
+  const [setupVotingFor, setSetupVotingFor] = useState(null); // Track which event is being set up
 
   // Create form
   const [goal, setGoal] = useState("100"); // human tokens
@@ -123,9 +136,19 @@ export default function EventsPage() {
       const deployed = await ctr.waitForDeployment();
       const addr = deployed.target;
       
-      // Add to events list
+      // Add to events list and persist to localStorage
       const nextEventNum = eventsList.length + 1;
-      setEventsList([...eventsList, { eventNumber: nextEventNum, address: addr, eventId: evId }]);
+      const newEvent = { eventNumber: nextEventNum, address: addr, eventId: evId };
+      const updatedList = [...eventsList, newEvent];
+      setEventsList(updatedList);
+      
+      // Persist to localStorage
+      try {
+        localStorage.setItem('charityEvents', JSON.stringify(updatedList));
+      } catch (e) {
+        console.error('Failed to save events to localStorage:', e);
+      }
+      
       setSelectedEventNum(nextEventNum);
       
       setStatus(`Event ${nextEventNum} deployed at ${addr}`);
@@ -166,6 +189,127 @@ export default function EventsPage() {
 
   function getEventByNumber(num) {
     return eventsList.find(e => e.eventNumber === num);
+  }
+
+  async function setupVotingModules(eventNum) {
+    const event = getEventByNumber(eventNum);
+    if (!event) return setStatus(`Event ${eventNum} not found`);
+    if (event.donorVoting && event.attestorVoting) {
+      return setStatus(`Voting already set up for Event ${eventNum}`);
+    }
+
+    setSetupVotingFor(eventNum);
+    setStatus(`Setting up voting modules for Event ${eventNum}...`);
+
+    try {
+      // Get oracle wallet (account 19)
+      const wallets = await getWallets(rpcUrl);
+      const oracleWallet = wallets[19]; // Account 19 has oracle role
+      
+      // Get provider for nonce management
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      let currentNonce = await provider.getTransactionCount(oracleWallet.address, "latest");
+      
+      // 1. Deploy DonorVoting with explicit nonce
+      setStatus(`Deploying DonorVoting for Event ${eventNum}...`);
+      const donorVotingFactory = new ethers.ContractFactory(
+        DonorVotingArtifact.abi,
+        DonorVotingArtifact.bytecode,
+        oracleWallet
+      );
+      const donorVoting = await donorVotingFactory.deploy(
+        addresses.Governance,
+        addresses.DonorRegistry,
+        addresses.DonorPledges,
+        addresses.DonorRanking,
+        event.eventId,
+        { nonce: currentNonce++ }
+      );
+      await donorVoting.waitForDeployment();
+      const donorVotingAddr = donorVoting.target;
+      setStatus(`DonorVoting deployed: ${donorVotingAddr}`);
+
+      // 2. Deploy AttestorVoting with explicit nonce
+      setStatus(`Deploying AttestorVoting for Event ${eventNum}...`);
+      const attestorVotingFactory = new ethers.ContractFactory(
+        AttestorVotingArtifact.abi,
+        AttestorVotingArtifact.bytecode,
+        oracleWallet
+      );
+      const attestorVoting = await attestorVotingFactory.deploy(
+        addresses.Governance,
+        addresses.SGDCoin,
+        addresses.AttestorRegistry,
+        { nonce: currentNonce++ }
+      );
+      await attestorVoting.waitForDeployment();
+      const attestorVotingAddr = attestorVoting.target;
+      setStatus(`AttestorVoting deployed: ${attestorVotingAddr}`);
+
+      // 3. Register with Oracle with explicit nonce
+      setStatus(`Registering voting modules with Oracle...`);
+      const oracle = new ethers.Contract(addresses.Oracle, OracleArtifact.abi, oracleWallet);
+      const tx = await oracle.setModules(
+        event.eventId,
+        donorVotingAddr,
+        attestorVotingAddr,
+        event.address,
+        { nonce: currentNonce++ }
+      );
+      setStatus(`Oracle.setModules tx: ${tx.hash}`);
+      const receipt = await tx.wait();
+      
+      // Parse ModulesSet event from Oracle
+      const modulesSetEvent = receipt.logs
+        .map(log => {
+          try {
+            return oracle.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find(parsed => parsed && parsed.name === 'ModulesSet');
+      
+      if (modulesSetEvent) {
+        const timestamp = new Date().toLocaleTimeString();
+        setEvents((prev) => [
+          {
+            time: timestamp,
+            name: 'ModulesSet',
+            data: {
+              'Event': `#${eventNum}`,
+              'eventId': modulesSetEvent.args[0],
+              'DonorVoting': modulesSetEvent.args[1],
+              'AttestorVoting': modulesSetEvent.args[2],
+              'CharityEvent': modulesSetEvent.args[3],
+              'tx': tx.hash,
+            }
+          },
+          ...prev,
+        ]);
+      }
+      
+      setStatus(`Voting modules registered with Oracle!`);
+
+      // 4. Update event in localStorage
+      const updatedEvent = {
+        ...event,
+        donorVoting: donorVotingAddr,
+        attestorVoting: attestorVotingAddr,
+        votingSetup: true
+      };
+      const updatedList = eventsList.map(e => 
+        e.eventNumber === eventNum ? updatedEvent : e
+      );
+      setEventsList(updatedList);
+      localStorage.setItem('charityEvents', JSON.stringify(updatedList));
+      
+      setStatus(`✓ Voting setup complete for Event ${eventNum}`);
+      setSetupVotingFor(null);
+    } catch (e) {
+      setStatus(`Voting setup failed: ${e.message || e}`);
+      setSetupVotingFor(null);
+    }
   }
 
   async function closeFunding() {
@@ -254,7 +398,7 @@ export default function EventsPage() {
       // Fetch fresh nonce to avoid nonce conflicts after the approve tx
       const currentNonce = await provider.getTransactionCount(donorAddr, 'latest');
       
-      // create pledge with explicit nonce
+      // create pledge with explicit nonce (will lookup CharityEvent via Oracle)
       tx = await pledges.createPledge(event.eventId, amountWei, { nonce: currentNonce });
       setStatus("createPledge tx sent: " + tx.hash);
       
@@ -401,7 +545,7 @@ export default function EventsPage() {
 
       <section style={{ marginBottom: 12 }}>
         <h3>Event Summary for Event {selectedEventNum}</h3>
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
           <label>Select Event: 
             <input 
               type="number" 
@@ -411,6 +555,23 @@ export default function EventsPage() {
               style={{ marginLeft: 8, width: 60 }}
             />
           </label>
+          <div style={{ fontSize: 12, color: '#666' }}>
+            ({eventsList.length} event{eventsList.length !== 1 ? 's' : ''} stored)
+          </div>
+          {eventsList.length > 0 && (
+            <button 
+              onClick={() => {
+                if (window.confirm('Clear all stored events? (This will NOT delete events from blockchain, only local cache)')) {
+                  setEventsList([]);
+                  localStorage.removeItem('charityEvents');
+                  setStatus('Local event cache cleared');
+                }
+              }}
+              style={{ fontSize: 11, padding: '2px 6px' }}
+            >
+              Clear Cache
+            </button>
+          )}
         </div>
         {getSelectedEvent() ? (
           <>
@@ -427,6 +588,27 @@ export default function EventsPage() {
             ) : (
               <div style={{ color: "#666" }}>Loading summary...</div>
             )}
+            <div style={{ marginTop: 8, padding: 8, background: '#f9f9f9', borderRadius: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>Voting Setup:</div>
+              {getSelectedEvent().votingSetup ? (
+                <div style={{ fontSize: 12, color: '#2a7f2a' }}>
+                  ✓ Voting modules deployed and registered
+                  <div>DonorVoting: <code style={{ fontSize: 10 }}>{short(getSelectedEvent().donorVoting)}</code></div>
+                  <div>AttestorVoting: <code style={{ fontSize: 10 }}>{short(getSelectedEvent().attestorVoting)}</code></div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>No voting modules yet</div>
+                  <button 
+                    onClick={() => setupVotingModules(selectedEventNum)}
+                    disabled={setupVotingFor === selectedEventNum}
+                    style={{ fontSize: 12, padding: '4px 8px' }}
+                  >
+                    {setupVotingFor === selectedEventNum ? 'Setting up...' : 'Setup Voting Modules'}
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         ) : (
           <>
@@ -478,12 +660,12 @@ export default function EventsPage() {
           </div>
           <div style={{ marginTop: 8, maxHeight: '70vh', overflow: 'auto' }}>
             {events.length === 0 ? (
-              <div style={{ color: '#666' }}>No events yet. Events (EventCreated, PhaseChanged, FundsRaised, EvidenceSubmitted, PledgeCreated, etc.) will appear here.</div>
+              <div style={{ color: '#666' }}>No events yet. Events (EventCreated, PhaseChanged, FundsRaised, EvidenceSubmitted, PledgeCreated, ModulesSet, etc.) will appear here.</div>
             ) : (
               events.map((ev) => (
                 <div key={ev.id} style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                  <div style={{ fontSize: 12, color: '#999' }}>{new Date().toLocaleTimeString()}</div>
-                  <div style={{ fontWeight: 700 }}>{ev.type}</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>{ev.time || new Date().toLocaleTimeString()}</div>
+                  <div style={{ fontWeight: 700 }}>{ev.type || ev.name}</div>
                   {ev.type === 'EventCreated' && (
                     <div>
                       <div>Event #{ev.eventNum}</div>
@@ -541,6 +723,16 @@ export default function EventsPage() {
                       <div>donor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.donor)}</span></div>
                       <div>amount: {ev.amount}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.name === 'ModulesSet' && ev.data && (
+                    <div>
+                      <div>Event {ev.data.Event}</div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.data.eventId)}</span></div>
+                      <div>DonorVoting: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.data.DonorVoting)}</span></div>
+                      <div>AttestorVoting: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.data.AttestorVoting)}</span></div>
+                      <div>CharityEvent: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.data.CharityEvent)}</span></div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.data.tx}</div>
                     </div>
                   )}
                 </div>

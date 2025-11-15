@@ -7,6 +7,7 @@ import CharityPage from "./pages/charityPage";
 import AdminPage from "./pages/adminPage";
 import EventsPage from "./pages/eventsPage";
 import VotingPage from "./pages/votingPage";
+import AttestorsPage from "./pages/attestorsPage";
 
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showEvents, setShowEvents] = useState(false);
   const [showVoting, setShowVoting] = useState(false);
+  const [showAttestors, setShowAttestors] = useState(false);
 
   useEffect(() => {
     console.log("Loaded contract addresses:", addresses);
@@ -55,6 +57,9 @@ function App() {
           <button style={{ marginLeft: 8 }} onClick={() => setShowVoting((s) => !s)}>
             {showVoting ? "Close Voting Page" : "Open Voting Page"}
           </button>
+          <button style={{ marginLeft: 8 }} onClick={() => setShowAttestors((s) => !s)}>
+            {showAttestors ? "Close Attestors Page" : "Open Attestors Page"}
+          </button>
         </div>
       </header>
 
@@ -69,11 +74,13 @@ function App() {
           <EventsPage />
         ) : showVoting ? (
           <VotingPage />
+        ) : showAttestors ? (
+          <AttestorsPage />
         ) : (
           <div>
             <p>
               Use the "Open Donor Page", "Open Charity Page", "Open Admin Page",
-              "Open Events Page" or "Open Voting Page" buttons to view helpers.
+              "Open Events Page", "Open Voting Page" or "Open Attestors Page" buttons to view helpers.
             </p>
           </div>
         )}

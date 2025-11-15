@@ -39,10 +39,16 @@ export default function VotingPage() {
   // Input helpers
   const [assignDonorIndex, setAssignDonorIndex] = useState(1);
   const [assignStream, setAssignStream] = useState(0);
+  const [assignAttestorIndex, setAssignAttestorIndex] = useState(11);
+  const [assignAttestorStream, setAssignAttestorStream] = useState(0);
   const [commitDonorIndex, setCommitDonorIndex] = useState(1);
   const [commitChoice, setCommitChoice] = useState("true");
+  const [commitAttestorIndex, setCommitAttestorIndex] = useState(11);
+  const [commitAttestorChoice, setCommitAttestorChoice] = useState("true");
+  const [attestorStake, setAttestorStake] = useState("1000"); // Default 1000 SGD
 
   const [saltCache, setSaltCache] = useState({});
+  const [attestorSaltCache, setAttestorSaltCache] = useState({});
   const [events, setEvents] = useState([]);
 
   useEffect(() => {
@@ -249,8 +255,10 @@ export default function VotingPage() {
   }
 
   async function oracleContract() {
-    if (!adminWallet) throw new Error("Admin wallet not ready");
-    return new ethers.Contract(addresses.Oracle, OracleArtifact.abi, adminWallet);
+    // Account 19 has ORACLE_ROLE (set in deployment script)
+    const oracleWallet = wallets[19];
+    if (!oracleWallet) throw new Error("Oracle wallet (index 19) not ready");
+    return new ethers.Contract(addresses.Oracle, OracleArtifact.abi, oracleWallet);
   }
 
   async function checkModulesStatus() {
@@ -327,40 +335,82 @@ export default function VotingPage() {
   }
 
   async function doSetDeadlines() {
-    if (!eventId || !donorVotingAddr || !attestorVotingAddr) {
-      return setStatus("Need modules set first");
+    console.log("=== doSetDeadlines called ===");
+    console.log("eventId:", eventId);
+    console.log("donorVotingAddr (local state):", donorVotingAddr);
+    console.log("attestorVotingAddr (local state):", attestorVotingAddr);
+    
+    if (!eventId) {
+      console.log("FAILED: No eventId");
+      return setStatus("Need eventId first");
     }
+    
     try {
+      // Fetch modules from Oracle contract (they might have been set in eventsPage)
+      console.log("Getting oracle contract with wallet 19...");
+      const oracle = await oracleContract();
+      console.log("Oracle contract obtained, reading modules for eventId:", eventId);
+      
+      const modules = await oracle.modules(eventId);
+      console.log("Modules read from contract:");
+      console.log("  donor:", modules.donor);
+      console.log("  attestor:", modules.attestor);
+      console.log("  charity:", modules.charity);
+      
+      if (modules.donor === ethers.ZeroAddress || modules.attestor === ethers.ZeroAddress) {
+        console.log("FAILED: Modules not set in contract");
+        setStatus(`Cannot set deadlines: Modules not set in Oracle. Please set up voting modules first.`);
+        await checkModulesStatus();
+        return;
+      }
+      
+      // Update local state with the addresses from Oracle
+      if (!donorVotingAddr && modules.donor !== ethers.ZeroAddress) {
+        console.log("Updating local donorVotingAddr from Oracle:", modules.donor);
+        setDonorVotingAddr(modules.donor);
+      }
+      if (!attestorVotingAddr && modules.attestor !== ethers.ZeroAddress) {
+        console.log("Updating local attestorVotingAddr from Oracle:", modules.attestor);
+        setAttestorVotingAddr(modules.attestor);
+      }
+      
+      console.log("Modules verified successfully");
+      setStatus(`Modules verified - Donor: ${short(modules.donor)}, Attestor: ${short(modules.attestor)}`);
+      
       const now = Math.floor(Date.now() / 1000);
       const commit = now + 60;
       const reveal = commit + 60;
       const commit2 = commit;
       const reveal2 = reveal;
       
-      const oracle = await oracleContract();
+      console.log("Calculated deadlines:");
+      console.log("  donorCommit:", commit);
+      console.log("  donorReveal:", reveal);
+      console.log("  attestorCommit:", commit2);
+      console.log("  attestorReveal:", reveal2);
+      
       setStatus(`Setting deadlines: commit=${commit}, reveal=${reveal}...`);
+      console.log("Calling oracle.setDeadlines...");
       const tx = await oracle.setDeadlines(eventId, commit, reveal, commit2, reveal2);
+      console.log("Transaction sent:", tx.hash);
       setStatus("setDeadlines tx: " + tx.hash);
+      console.log("Waiting for transaction confirmation...");
       const receipt = await tx.wait();
+      console.log("Transaction receipt:", receipt);
       
       // Check if transaction reverted
       if (receipt.status === 0) {
+        console.log("ERROR: Transaction reverted");
         return setStatus("setDeadlines transaction reverted. Check if phase is Pending.");
       }
+      console.log("Transaction confirmed successfully");
       
       // Wait a bit for state to update
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Try to get the actual DonorVoting address from Oracle to verify
-      let actualDonorAddr = donorVotingAddr;
-      try {
-        const modules = await oracle.modules(eventId);
-        if (modules && modules.donor !== ethers.ZeroAddress) {
-          actualDonorAddr = modules.donor;
-        }
-      } catch (e) {
-        // If we can't read modules, use the input address
-      }
+      // Use the donor address from the modules we already fetched
+      const actualDonorAddr = modules.donor;
+      console.log("Verifying deadlines on DonorVoting contract:", actualDonorAddr);
       
       // Verify deadlines were set on the actual contract
       const dv = new ethers.Contract(actualDonorAddr, DonorVotingArtifact.abi, provider);
@@ -368,8 +418,10 @@ export default function VotingPage() {
       const revealDeadline = Number(await dv.revealDeadline());
       
       if (commitDeadline === 0 || revealDeadline === 0) {
+        console.log("WARNING: Deadlines may not have been set properly");
         setStatus(`Warning: Deadlines may not have been set. Commit: ${commitDeadline}, Reveal: ${revealDeadline}. Reading from: ${short(actualDonorAddr)}`);
       } else {
+        console.log("SUCCESS: Deadlines set successfully");
         setStatus(`Deadlines set successfully! Commit: ${commitDeadline}, Reveal: ${revealDeadline}`);
       }
       
@@ -377,11 +429,20 @@ export default function VotingPage() {
       await refreshDeadlineInfo();
       await refreshDonorPhase();
     } catch (e) {
+      console.error("=== ERROR in doSetDeadlines ===");
+      console.error("Error object:", e);
+      console.error("Error reason:", e.reason);
+      console.error("Error message:", e.message);
+      console.error("Error code:", e.code);
+      console.error("Error data:", e.data);
+      
       const errorMsg = e.reason || e.message || String(e);
       if (errorMsg.includes("donor module not set") || errorMsg.includes("attestor module not set") || errorMsg.includes("eventExists")) {
+        console.log("ERROR TYPE: Modules not set");
         setStatus("setDeadlines failed: Modules not set in Oracle. Please call 'Set Modules' first.");
         await checkModulesStatus();
       } else {
+        console.log("ERROR TYPE: Other error");
         setStatus("setDeadlines failed: " + errorMsg);
       }
     }
@@ -400,6 +461,22 @@ export default function VotingPage() {
       setStatus(`Assigned donor ${short(addr)} to stream ${assignStream}`);
     } catch (e) {
       setStatus("assignVoter failed: " + (e.message || e));
+    }
+  }
+
+  async function doAssignAttestor() {
+    if (!eventId || !attestorVotingAddr) return setStatus("Set event & attestorVoting");
+    const wallet = wallets[assignAttestorIndex];
+    if (!wallet) return setStatus("No wallet at index " + assignAttestorIndex);
+    try {
+      const oracle = await oracleContract();
+      const addr = await wallet.getAddress();
+      const tx = await oracle.assignAttestor(eventId, addr, Number(assignAttestorStream));
+      setStatus("assignAttestor tx: " + tx.hash);
+      await tx.wait();
+      setStatus(`Assigned attestor ${short(addr)} to stream ${assignAttestorStream}`);
+    } catch (e) {
+      setStatus("assignAttestor failed: " + (e.message || e));
     }
   }
 
@@ -522,6 +599,60 @@ export default function VotingPage() {
       await refreshOverall();
     } catch (e) {
       setStatus("Reveal failed: " + (e.message || e));
+    }
+  }
+
+  async function attestorCommit() {
+    if (!attestorVotingAddr) return setStatus("AttestorVoting address missing");
+    const wallet = wallets[commitAttestorIndex];
+    if (!wallet) return setStatus("No wallet at index " + commitAttestorIndex);
+    try {
+      const stakeWei = ethers.parseUnits(attestorStake, 18);
+      
+      // First approve SGD token spending
+      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, wallet);
+      setStatus("Approving SGD token for staking...");
+      const approveTx = await sgd.approve(attestorVotingAddr, stakeWei);
+      await approveTx.wait();
+      
+      // Generate commitment
+      const saltHex = ethers.hexlify(ethers.randomBytes(32));
+      const saltBig = BigInt(saltHex);
+      const choiceBool = commitAttestorChoice === "true";
+      const commitment = ethers.solidityPackedKeccak256(
+        ["bool", "uint256"],
+        [choiceBool, saltBig]
+      );
+      
+      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+      setStatus("Committing attestor vote with stake...");
+      const tx = await contract.commit(commitment, stakeWei);
+      setStatus("commit tx: " + tx.hash);
+      await tx.wait();
+      setStatus(`Commit stored for attestor ${commitAttestorIndex}, choice=${choiceBool}, stake=${attestorStake} SGD, salt=${saltHex}`);
+      setAttestorSaltCache((prev) => ({
+        ...prev,
+        [commitAttestorIndex]: { choice: choiceBool, salt: saltBig, saltHex, stake: attestorStake },
+      }));
+    } catch (e) {
+      setStatus("Attestor commit failed: " + (e.message || e));
+    }
+  }
+
+  async function attestorReveal(index) {
+    if (!attestorVotingAddr) return setStatus("AttestorVoting address missing");
+    const wallet = wallets[index];
+    if (!wallet) return setStatus("No wallet at index " + index);
+    const data = attestorSaltCache[index];
+    if (!data) return setStatus("No cached commit for attestor " + index);
+    try {
+      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+      const tx = await contract.reveal(data.choice, data.salt);
+      setStatus("reveal tx: " + tx.hash);
+      await tx.wait();
+      setStatus(`Reveal confirmed for attestor ${index}`);
+    } catch (e) {
+      setStatus("Attestor reveal failed: " + (e.message || e));
     }
   }
 
@@ -736,8 +867,15 @@ export default function VotingPage() {
           </div>
         )}
         <div style={{ marginTop: 12, display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#fff3cd", borderRadius: 4, fontSize: 12 }}>
+            <strong>ℹ️ Typical Setup:</strong> Donors (accounts 1-10), Attestors (accounts 11-18), Oracle (account 19)
+          </div>
+          
+          <div style={{ marginTop: 8 }}>
+            <strong>Assign Donors (who pledged funds)</strong>
+          </div>
           <label>
-            Assign donor wallet index
+            Donor wallet index
             <select value={assignDonorIndex} onChange={(e) => setAssignDonorIndex(Number(e.target.value))}>
               {donorOptions()}
             </select>
@@ -753,12 +891,60 @@ export default function VotingPage() {
             />
           </label>
           <button onClick={doAssignDonor}>Assign Donor to Stream</button>
+          
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #ddd" }}>
+            <strong>Assign Attestors (independent verifiers)</strong>
+          </div>
+          <div style={{ padding: 8, backgroundColor: "#ffe7e7", borderRadius: 4, fontSize: 11, marginBottom: 8 }}>
+            <strong>⚠️ Attestors must:</strong><br/>
+            1. Be registered in AttestorRegistry first<br/>
+            2. Approve SGD token spending for staking<br/>
+            3. Have enough SGD balance for stake (amount chosen during commit)<br/>
+            4. Stake is between sigmaMin and sigmaMax (configurable, check contract)
+          </div>
+          <label>
+            Attestor wallet index
+            <select value={assignAttestorIndex} onChange={(e) => setAssignAttestorIndex(Number(e.target.value))}>
+              {donorOptions()}
+            </select>
+          </label>
+          <label>
+            Stream (0-2)
+            <input
+              type="number"
+              min="0"
+              max="2"
+              value={assignAttestorStream}
+              onChange={(e) => setAssignAttestorStream(Number(e.target.value))}
+            />
+          </label>
+          <button onClick={doAssignAttestor}>Assign Attestor to Stream</button>
+          
+          <div style={{ marginTop: 16, padding: 8, backgroundColor: "#e7f3ff", borderRadius: 4, fontSize: 12 }}>
+            <strong>🎯 Phase Advancement:</strong><br/>
+            • Use "Advance Donor/Attestor Phase" AFTER setup is complete<br/>
+            • Pending → Commit: Opens voting (after deadlines set & voters assigned)<br/>
+            • Commit → Reveal: Must wait until commitDeadline passes<br/>
+            • Reveal → Finalized: Must wait until revealDeadline passes<br/>
+            • Use "Advance Both Phases" to move both donor & attestor together
+          </div>
         </div>
       </section>
 
       <section style={{ marginBottom: 16 }}>
         <h3>Donor Commit-Reveal</h3>
         <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#e7f3ff", borderRadius: 4, fontSize: 12, marginBottom: 8 }}>
+            <strong>📅 How Deadlines Work:</strong>
+            <div style={{ marginTop: 4 }}>
+              • <strong>Pending</strong> → Set deadlines first<br/>
+              • <strong>Commit Phase</strong> → Vote before commit deadline (vote is secret)<br/>
+              • <strong>Reveal Phase</strong> → Reveal vote after commit deadline, before reveal deadline<br/>
+              • <strong>Finalized</strong> → Voting closed, results calculated<br/>
+              • ⚠️ <strong>Late votes REVERT</strong> - you MUST vote before the deadline!
+            </div>
+          </div>
+          
           <div style={{ padding: 8, backgroundColor: "#f0f0f0", borderRadius: 4 }}>
             <strong>Current Phase:</strong> {donorPhase === null ? "Not loaded" : donorPhase === 0 ? "Pending" : donorPhase === 1 ? "Commit ✓" : donorPhase === 2 ? "Reveal ✓" : donorPhase === 3 ? "Finalized ✓" : "Unknown"}
             <button style={{ marginLeft: 8 }} onClick={refreshDonorPhase}>Refresh Phase</button>
@@ -816,6 +1002,58 @@ export default function VotingPage() {
               {Object.entries(saltCache).map(([idx, data]) => (
                 <li key={idx}>
                   Donor {idx}: choice={String(data.choice)} salt={data.saltHex}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ marginBottom: 16 }}>
+        <h3>Attestor Commit-Reveal (with Staking)</h3>
+        <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#fff3cd", borderRadius: 4, fontSize: 12 }}>
+            <strong>💰 Attestor Staking:</strong><br/>
+            • Attestors stake SGD tokens when committing<br/>
+            • <strong>Correct vote</strong> → Get stake back + share of slashed funds<br/>
+            • <strong>Wrong vote</strong> → Stake is slashed and redistributed<br/>
+            • Stake amount: You choose (within sigmaMin/sigmaMax bounds)
+          </div>
+          
+          <label>
+            Attestor wallet index
+            <select value={commitAttestorIndex} onChange={(e) => setCommitAttestorIndex(Number(e.target.value))}>
+              {donorOptions()}
+            </select>
+          </label>
+          <label>
+            Vote choice
+            <select value={commitAttestorChoice} onChange={(e) => setCommitAttestorChoice(e.target.value)}>
+              <option value="true">Pass (true)</option>
+              <option value="false">Fail (false)</option>
+            </select>
+          </label>
+          <label>
+            Stake Amount (SGD tokens)
+            <input
+              type="text"
+              value={attestorStake}
+              onChange={(e) => setAttestorStake(e.target.value)}
+              placeholder="e.g., 1000"
+            />
+          </label>
+          <button onClick={attestorCommit}>
+            Commit Attestor Vote (with Stake)
+          </button>
+          <button onClick={() => attestorReveal(commitAttestorIndex)}>
+            Reveal Attestor Vote
+          </button>
+          <div style={{ fontSize: 13, color: "#444" }}>
+            Cached attestor commits:
+            <ul>
+              {Object.entries(attestorSaltCache).map(([idx, data]) => (
+                <li key={idx}>
+                  Attestor {idx}: choice={String(data.choice)} stake={data.stake} SGD salt={data.saltHex}
                 </li>
               ))}
             </ul>

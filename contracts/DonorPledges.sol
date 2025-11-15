@@ -172,14 +172,23 @@ contract DonorPledges is Registry {
 
         // Find the CharityEvent contract and notify it of the new funds
         address oracleAddr = governance.getContractAddress("Oracle");
-        
+
         if (oracleAddr != address(0)) {
             // Get the modules struct from the Oracle
-            (address donor, address attestor, address charity) = Oracle(oracleAddr).modules(_eventId);
+            Oracle oracle = Oracle(oracleAddr);
+            (
+                address donorVoting,
+                address attestorVoting,
+                address charityEvent
+            ) = oracle.modules(_eventId);
 
             // Call updateRaised on the CharityEvent contract
-            if (charity != address(0)) {
-                CharityEvent(charity).updateRaised(_amount);
+            if (charityEvent != address(0)) {
+                try CharityEvent(charityEvent).updateRaised(_amount) {
+                    // Success
+                } catch {
+                    // Event not yet registered with Oracle, skip update
+                }
             }
         }
 
