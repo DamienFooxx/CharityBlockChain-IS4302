@@ -7,7 +7,7 @@ import AttestorVotingArtifact from "../abi/AttestorVoting.json";
 import OracleArtifact from "../abi/Oracle.json";
 import DonorRegistryArtifact from "../abi/DonorRegistry.json";
 import DonorRankingArtifact from "../abi/DonorRanking.json";
-import DonorPledgesArtifact from "../abi/DonorPledges.json";
+import EscrowVaultArtifact from "../abi/EscrowVault.json";
 import AttestorRegistryArtifact from "../abi/AttestorRegistry.json";
 import SGDCoinArtifact from "../abi/SGDCoin.json";
 import { getWallets } from "../utils/wallets";
@@ -50,6 +50,8 @@ export default function VotingPage() {
   const [saltCache, setSaltCache] = useState({});
   const [attestorSaltCache, setAttestorSaltCache] = useState({});
   const [events, setEvents] = useState([]);
+  const [donorPledgesList, setDonorPledgesList] = useState([]);
+  const [donorStreamSelections, setDonorStreamSelections] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -77,9 +79,66 @@ export default function VotingPage() {
   useEffect(() => {
     if (eventId) {
       checkModulesStatus();
+      fetchDonorsWithPledges();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
+
+  async function fetchDonorsWithPledges() {
+    if (!eventId) return;
+    try {
+      setStatus("Fetching donors with pledges...");
+      
+      // Use EscrowVault to get pledge information via events
+      const escrowContract = new ethers.Contract(
+        addresses.EscrowVault,
+        EscrowVaultArtifact.abi,
+        provider
+      );
+
+      // Query PledgeDeposited events for this eventId
+      const filter = escrowContract.filters.PledgeDeposited(null, eventId);
+      const events = await escrowContract.queryFilter(filter);
+      
+      // Group pledges by donor
+      const donorMap = new Map();
+      
+      for (const event of events) {
+        const pledgeId = event.args.pledgeId;
+        const donorAddr = event.args.donor;
+        const amount = event.args.amount;
+        
+        // Check if pledge is still active
+        const isActive = await escrowContract.pledgeActive(pledgeId);
+        
+        if (isActive) {
+          if (donorMap.has(donorAddr)) {
+            donorMap.get(donorAddr).amount += amount;
+          } else {
+            donorMap.set(donorAddr, {
+              address: donorAddr,
+              amount: amount,
+            });
+          }
+        }
+      }
+      
+      const donorsList = Array.from(donorMap.values());
+      setDonorPledgesList(donorsList);
+      
+      // Initialize stream selections to 0
+      const initialSelections = {};
+      donorsList.forEach(donor => {
+        initialSelections[donor.address] = 0;
+      });
+      setDonorStreamSelections(initialSelections);
+      
+      setStatus(`Found ${donorsList.length} donors with pledges`);
+    } catch (e) {
+      console.error("Failed to fetch donors:", e);
+      setStatus("Failed to fetch donors: " + (e.message || e));
+    }
+  }
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(rpcUrl), []);
 
@@ -464,6 +523,19 @@ export default function VotingPage() {
     }
   }
 
+  async function assignSpecificDonor(donorAddress, stream) {
+    if (!eventId || !donorVotingAddr) return setStatus("Set event & donorVoting");
+    try {
+      const oracle = await oracleContract();
+      const tx = await oracle.assignVoter(eventId, donorAddress, Number(stream));
+      setStatus(`Assigning ${short(donorAddress)} to stream ${stream}...`);
+      await tx.wait();
+      setStatus(`✓ Assigned donor ${short(donorAddress)} to stream ${stream}`);
+    } catch (e) {
+      setStatus(`Failed to assign ${short(donorAddress)}: ` + (e.message || e));
+    }
+  }
+
   async function doAssignAttestor() {
     if (!eventId || !attestorVotingAddr) return setStatus("Set event & attestorVoting");
     const wallet = wallets[assignAttestorIndex];
@@ -819,33 +891,8 @@ export default function VotingPage() {
       </section>
 
       <section style={{ marginBottom: 16 }}>
-        <h3>Deploy Voting Modules (optional)</h3>
+        <h3>Oracle Setup & Voting Control</h3>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={deployDonorVoting}>Deploy DonorVoting</button>
-          <button onClick={deployAttestorVoting}>Deploy AttestorVoting</button>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <div>DonorVoting: <code>{donorVotingAddr || "(set or deploy)"}</code></div>
-          <div>AttestorVoting: <code>{attestorVotingAddr || "(set or deploy)"}</code></div>
-        </div>
-        <div style={{ marginTop: 8, display: "grid", gap: 8, maxWidth: 600 }}>
-          <input
-            placeholder="Override DonorVoting address"
-            value={donorVotingAddr}
-            onChange={(e) => setDonorVotingAddr(e.target.value)}
-          />
-          <input
-            placeholder="Override AttestorVoting address"
-            value={attestorVotingAddr}
-            onChange={(e) => setAttestorVotingAddr(e.target.value)}
-          />
-        </div>
-      </section>
-
-      <section style={{ marginBottom: 16 }}>
-        <h3>Oracle Wiring</h3>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={doSetModules}>Set Modules</button>
           <button onClick={doSetDeadlines}>Set Deadlines (+60s/+120s)</button>
           <button onClick={doAdvanceDonorPhase}>Advance Donor Phase</button>
           <button onClick={doAdvanceAttestorPhase}>Advance Attestor Phase</button>
@@ -874,23 +921,91 @@ export default function VotingPage() {
           <div style={{ marginTop: 8 }}>
             <strong>Assign Donors (who pledged funds)</strong>
           </div>
-          <label>
-            Donor wallet index
-            <select value={assignDonorIndex} onChange={(e) => setAssignDonorIndex(Number(e.target.value))}>
-              {donorOptions()}
-            </select>
-          </label>
-          <label>
-            Stream (0-2)
-            <input
-              type="number"
-              min="0"
-              max="2"
-              value={assignStream}
-              onChange={(e) => setAssignStream(Number(e.target.value))}
-            />
-          </label>
-          <button onClick={doAssignDonor}>Assign Donor to Stream</button>
+          {donorPledgesList.length === 0 ? (
+            <div style={{ padding: 8, backgroundColor: "#f8f9fa", borderRadius: 4, fontSize: 13, color: "#666" }}>
+              No donors with pledges found. Load event first or create pledges.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              {donorPledgesList.map((donor) => (
+                <div
+                  key={donor.address}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: 12,
+                    border: "1px solid #ddd",
+                    borderRadius: 6,
+                    backgroundColor: "#f8f9fa",
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontFamily: "monospace", fontWeight: "bold" }}>
+                      {short(donor.address)}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                      Pledged: {ethers.formatUnits(donor.amount, 18)} SGD
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 12, margin: 0 }}>
+                      Stream:
+                      <select
+                        value={donorStreamSelections[donor.address] || 0}
+                        onChange={(e) =>
+                          setDonorStreamSelections((prev) => ({
+                            ...prev,
+                            [donor.address]: Number(e.target.value),
+                          }))
+                        }
+                        style={{ marginLeft: 6, padding: 4 }}
+                      >
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                      </select>
+                    </label>
+                    <button
+                      onClick={() =>
+                        assignSpecificDonor(
+                          donor.address,
+                          donorStreamSelections[donor.address] || 0
+                        )
+                      }
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        backgroundColor: "#007bff",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Assign
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={fetchDonorsWithPledges}
+              style={{
+                padding: "6px 12px",
+                fontSize: 12,
+                backgroundColor: "#6c757d",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}
+            >
+              Refresh Donor List
+            </button>
+          </div>
           
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #ddd" }}>
             <strong>Assign Attestors (independent verifiers)</strong>
