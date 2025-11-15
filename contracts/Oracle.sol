@@ -403,48 +403,58 @@ contract Oracle {
         (, bool passed) = DonorVoting(donor).streamResult(stream);
         return passed; // interpret "passed" == true outcome
     }
-
     /**
-     * @notice If donor layer says all streams passed, mark event verified and release escrow.
-     */
+    * @notice Checks for aligned verification and disburses funds if APPROVED.
+    * @dev Fetches results from both DonorVoting and AttestorVoting.
+    * Calls CharityEvent.setVerified, which performs the alignment check.
+    * Only if the event phase becomes APPROVED does it proceed to release funds.
+    */
     function disburseIfVerified(
         bytes32 eventId
     ) external onlyOracle eventExists(eventId) {
-        (bool decided, bool passed, bool[3] memory perStream) = DonorVoting(
+        address charityContract = modules[eventId].charity;
+        require(charityContract != address(0), "OracleAstraea: Charity contract not set");
+
+        // Get Donor Result
+        (bool donorDecided, bool donorPassed, bool[3] memory perStream) = DonorVoting(
             modules[eventId].donor
         ).overallResult();
-        require(decided, "OracleAstraea: donor not decided");
-        require(passed, "OracleAstraea: not verified");
-
-        // Mark verified at the project/event contract
-        if (modules[eventId].charity != address(0)) {
-            CharityEvent(modules[eventId].charity).setVerified(true, perStream);
-        }
-
-        // Release funds from Escrow to the event's beneficiary
-        address escrow = governance.getContractAddress("EscrowVault");
-        require(escrow != address(0), "OracleAstraea: EscrowVault not set");
-
-        address beneficiary = address(0);
-        uint256 orgId = 0; // <-- ADDED
-        if (modules[eventId].charity != address(0)) {
-            beneficiary = CharityEvent(modules[eventId].charity).beneficiary();
-            orgId = CharityEvent(modules[eventId].charity).orgId(); // <-- ADDED
-        }
+        require(donorDecided, "OracleAstraea: donor not decided");
         
-        // 1. PUSH funds from EscrowVault to Treasury
-        uint256 totalReleased = EscrowVault(escrow).releaseToVerifiedBeneficiary(eventId, beneficiary); // <-- CAPTURE return value
-
-        // 2. CONFIRM funds in Treasury to update internal ledger
-        require(totalReleased > 0, "OracleAstraea: Escrow released no funds");
-        require(orgId > 0, "OracleAstraea: Invalid orgId");
-        CharityTreasury(beneficiary).confirmFundsReceived(orgId, eventId, totalReleased); // <-- ADDED CALL
-
-        emit Disbursed(eventId, beneficiary);
+        // Get Attestor Result
+        (bool attestorDecided, bool attestorPassed) = AttestorVoting(
+            modules[eventId].attestor
+        ).overallResult();
+        require(attestorDecided, "OracleAstraea: attestor not decided");
         
-        // Mark event as completed after successful disbursement
-        if (modules[eventId].charity != address(0)) {
-            CharityEvent(modules[eventId].charity).markCompleted();
+        // Set the verified status in CharityEvent
+        CharityEvent(charityContract).setVerified(donorPassed, perStream, attestorPassed);
+
+        // Check the event's phase after the call
+        // Only disburse if the alignment check inside setVerified was successful
+        CharityEvent.EventPhase currentPhase = CharityEvent(charityContract).phase();
+        
+        if (currentPhase == CharityEvent.EventPhase.APPROVED) {
+            // --- Disbursement Logic ---
+            address escrow = governance.getContractAddress("EscrowVault");
+            require(escrow != address(0), "OracleAstraea: EscrowVault not set");
+
+            address beneficiary = CharityEvent(charityContract).beneficiary();
+            uint256 orgId = CharityEvent(charityContract).orgId();
+
+            // PUSH funds from EscrowVault to Treasury (Beneficiary)
+            uint256 totalReleased = EscrowVault(escrow).releaseToVerifiedBeneficiary(eventId, beneficiary);
+            // CONFIRM funds in Treasury to update internal ledger
+            require(totalReleased > 0, "OracleAstraea: Escrow released no funds");
+            require(orgId > 0, "OracleAstraea: Invalid orgId");
+            CharityTreasury(beneficiary).confirmFundsReceived(orgId, eventId, totalReleased); 
+
+            emit Disbursed(eventId, beneficiary);
+            
+            // Mark event as completed after successful disbursement
+            if (modules[eventId].charity != address(0)) {
+                CharityEvent(modules[eventId].charity).markCompleted();
+                }
+            }
         }
-    }
 }

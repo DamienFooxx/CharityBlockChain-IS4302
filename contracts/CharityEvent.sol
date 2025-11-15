@@ -16,7 +16,7 @@ import "./CharityRegistry.sol";
  * 5. REJECTED - Verification failed, funds should be refunded
  */
 contract CharityEvent is Registry {
-    // --- Enums ---
+    // Enums 
     enum EventPhase {
         FUNDING, //0
         CLOSED,
@@ -27,7 +27,7 @@ contract CharityEvent is Registry {
         CANCELLED
     }
 
-    // --- State Variables ---
+    // State Variables 
     bytes32 public immutable eventId;
     uint256 public immutable orgId;
     address public immutable charityOwner;
@@ -40,10 +40,10 @@ contract CharityEvent is Registry {
 
     EventPhase public phase;
     bool public verified;
-    bool[3] public perStreamLast; // Last verification result per stream
+    bool[3] public perStreamLast;
     bool public completed;
     string public eventDescription;
-    string public evidenceCID; // IPFS CID for evidence
+    string public evidenceCID;
 
     uint256 public createdAt;
     uint256 public closedAt;
@@ -51,7 +51,7 @@ contract CharityEvent is Registry {
 
     uint256 public retryCount;
 
-    // --- Events ---
+    // Events 
     event EventCreated(
         bytes32 indexed eventId,
         uint256 indexed orgId,
@@ -79,7 +79,7 @@ contract CharityEvent is Registry {
 
     event Cancelled(bytes32 indexed eventId, uint256 timestamp);
 
-    // --- Modifiers ---
+    // Modifiers 
     modifier onlyOracle() {
         require(
             governance.hasRole(governance.ORACLE_ROLE(), msg.sender),
@@ -98,7 +98,7 @@ contract CharityEvent is Registry {
         _;
     }
 
-    // --- Constructor ---
+    // Constructor 
     constructor(
         address _governance,
         address _charityRegistry,
@@ -130,7 +130,7 @@ contract CharityEvent is Registry {
         emit EventCreated(_eventId, _orgId, _fundingGoal, _fundingDeadline);
     }
 
-    // --- Core Functions ---
+    // Core Functions
 
     /**
      * @dev Update total raised amount (called by pledge contract)
@@ -181,20 +181,33 @@ contract CharityEvent is Registry {
      * @dev Oracle marks verification status based on voting outcome
      */
     function setVerified(
-        bool _verified,
-        bool[3] calldata perStream
+        bool _donorResult,
+        bool[3] calldata perStream,
+        bool _attestorResult
     ) external onlyOracle inPhase(EventPhase.VERIFICATION) {
-        verified = _verified;
+        // 1. Check for alignment
+        bool aligned = (_donorResult == _attestorResult);
+        bool finalVerificationStatus;
+
+        if (aligned && _donorResult == true) {
+            // Alignment on "Pass": Event is APPROVED
+            finalVerificationStatus = true;
+        } else {
+            // Alignment on "Fail" OR any misalignment: Event is REJECTED
+            finalVerificationStatus = false;
+        }
+
+        verified = finalVerificationStatus;
         perStreamLast = perStream;
         verifiedAt = block.timestamp;
 
-        if (_verified) {
+        if (finalVerificationStatus) {
             _transitionPhase(EventPhase.APPROVED);
         } else {
             _transitionPhase(EventPhase.REJECTED);
         }
 
-        emit VerifiedSet(eventId, _verified, perStream);
+        emit VerifiedSet(eventId, finalVerificationStatus, perStream);
     }
 
     /**
@@ -234,7 +247,7 @@ contract CharityEvent is Registry {
         emit Cancelled(eventId, block.timestamp);
     }
 
-    // --- View Functions ---
+    // View Functions 
 
     // removed unnecessary getters; rely on public state variables
 
@@ -267,7 +280,7 @@ contract CharityEvent is Registry {
         );
     }
 
-    // --- Internal Functions ---
+    // Internal Functions 
 
     /**
      * @dev Transition to a new phase
@@ -286,10 +299,10 @@ contract CharityEvent is Registry {
         emit PhaseChanged(eventId, oldPhase, newPhase);
     }
 
-    // --- Compatibility Wrapper API ---
+    // Compatibility Wrapper API 
     /**
      * @notice Initializes a new charity event (shim). This contract is already constructed with its
-     *         parameters; this function records a new description hash and adjusts goal/deadline if still in FUNDING.
+     * parameters; this function records a new description hash and adjusts goal/deadline if still in FUNDING.
      */
     function createEvent(
         string calldata _name,
@@ -305,11 +318,11 @@ contract CharityEvent is Registry {
             fundingDeadline = block.timestamp + _duration;
         }
         eventDescription = _name;
-        evidenceCID = _metadataHash; // track initial metadata
+        evidenceCID = _metadataHash;
     }
 
     /**
-     * @notice Locks donor funds (shim). For integration, this increments raised balance.
+     * @notice Locks donor funds. For integration, this increments raised balance.
      */
     function stakeDonation(
         uint256 amount
@@ -320,31 +333,6 @@ contract CharityEvent is Registry {
         if (totalRaised >= fundingGoal) {
             _transitionPhase(EventPhase.CLOSED);
         }
-    }
-
-    /**
-     * @notice Submits post-event proof (shim).
-     */
-    function submitProof(
-        string calldata proofHash
-    ) external onlyCharityOwner whenNotPaused inPhase(EventPhase.CLOSED) {
-        require(bytes(proofHash).length > 0, "Invalid proof");
-        evidenceCID = proofHash;
-        _transitionPhase(EventPhase.VERIFICATION);
-        emit EvidenceSubmitted(eventId, proofHash);
-    }
-
-    /**
-     * @notice Finalizes event (shim). Mirrors setVerified path.
-     */
-    function finalizeEvent(
-        bool approved_
-    ) external onlyOracle whenNotPaused inPhase(EventPhase.VERIFICATION) {
-        verified = approved_;
-        perStreamLast = [approved_, approved_, approved_];
-        verifiedAt = block.timestamp;
-        _transitionPhase(approved_ ? EventPhase.APPROVED : EventPhase.REJECTED);
-        emit VerifiedSet(eventId, approved_, perStreamLast);
     }
 
     /**

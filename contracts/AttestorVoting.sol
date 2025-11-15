@@ -15,17 +15,17 @@ import "./DonorVoting.sol";
  *
  * @dev
  * This contract is instantiated per-event and controlled by the Oracle.
- * It uses a stakeToken (e.g., SGDCoin) for all financial operations.
- * It reads from a DonorVoting module to determine the "truth" for settlement.
+ * It uses SGDCoin for all financial operations.
+ * It reads from a DonorVoting module to determine the truth for settlement.
  */
 contract AttestorVoting {
 
     // State Variables
     Governance public immutable governance;
-    SGDCoin public immutable stakeToken; // The ERC20 token used for staking/rewards
+    SGDCoin public immutable stakeToken;
 
     uint8 public constant NUM_STREAMS = 3;
-    uint256 public constant RAY = 1e27; // For high-precision reward calculation
+    uint256 public constant RAY = 1e27;
 
     enum Phase { Pending, Commit, Reveal, Finalized }
     Phase public phase;
@@ -71,6 +71,9 @@ contract AttestorVoting {
     Tally[NUM_STREAMS] public tallies;
     Settlement[NUM_STREAMS] public settlements;
 
+    bool[NUM_STREAMS] public attestorStreamPassed; // Final decision per stream
+    bool public attestorOverallPassed; // Final aggregate decision
+    
     /**
     * Events
      */
@@ -82,7 +85,7 @@ contract AttestorVoting {
     event AttestorAssigned(address indexed attestor, uint8 stream);
     event DeadlinesAdjusted(uint256 commitDeadline, uint256 revealDeadline);
     event PhaseAdvanced(Phase newPhase);
-    event Finalized(Tally[NUM_STREAMS] tallies); // Emits final tallies
+    event Finalized(Tally[NUM_STREAMS] tallies);
     event ChallengeWindowSet(uint256 seconds_);
     event StreamSettled(
         uint8 indexed stream,
@@ -109,15 +112,15 @@ contract AttestorVoting {
     constructor(
         address _governance,
         address _stakeToken,
-        address _attestorRegistry // <-- ADDED
+        address _attestorRegistry
     ) {
         require(_governance != address(0), "AV: Zero governance");
         require(_stakeToken != address(0), "AV: Zero stake token");
-        require(_attestorRegistry != address(0), "AV: Zero registry"); // <-- ADDED
+        require(_attestorRegistry != address(0), "AV: Zero registry");
 
         governance = Governance(_governance);
         stakeToken = SGDCoin(_stakeToken);
-        attestorRegistry = AttestorRegistry(_attestorRegistry); // <-- ADDED
+        attestorRegistry = AttestorRegistry(_attestorRegistry);
         phase = Phase.Pending;
         tau = 1; // Default to 1 to avoid division by zero
     }
@@ -170,9 +173,8 @@ contract AttestorVoting {
      * @dev See interface documentation.
      */
     function fundPools(uint256 _addRT, uint256 _addRF) external onlyOracle {
-        // This function just updates the *accounting*.
-        // The Oracle is responsible for ensuring this contract
-        // holds enough `stakeToken` balance to cover claims.
+        // This function just updates the accounting.
+        // The Oracle is responsible for ensuring this contract holds enough `stakeToken` balance to cover claims.
         RT += _addRT;
         RF += _addRF;
         emit PoolsFunded(RT, RF);
@@ -243,20 +245,20 @@ contract AttestorVoting {
         Settlement storage s = settlements[_stream];
         require(!s.settled, "AV: Already settled");
 
-        // 1. Get Donor Truth
+        // Get Donor Truth
         (bool decided, bool passed) = DonorVoting(_donorModule).streamResult(_stream);
         require(decided, "AV: Donor not decided");
 
-        // 2. Store settlement data
+        // Store settlement data
         s.settled = true;
         s.settledAt = block.timestamp;
         s.donorOutcomeTrue = passed; // 'passed' (true) or 'failed' (false)
 
-        // 3. Get tallies for this stream
+        // Get tallies for this stream
         Tally memory tally = tallies[_stream];
         uint256 poolSlice;
         
-        // 4. Determine winners, losers, and pool slice
+        // Determine winners, losers, and pool slice
         if (passed == true) {
             // Donors voted "Pass" (True)
             s.winnersStake = tally.passStake;
@@ -271,7 +273,7 @@ contract AttestorVoting {
             RF -= poolSlice; // Deduct from pool
         }
 
-        // 5. Calculate reward per unit of stake (using RAY precision)
+        // Calculate reward per unit of stake (using RAY precision)
         // Winners get: (Pool Slice + Slashed Stakes)
         uint256 totalReward = poolSlice + s.losersStake;
 
@@ -308,20 +310,20 @@ contract AttestorVoting {
         require(stakes[msg.sender] == 0, "AV: Already committed");
         require(_commitment != bytes32(0), "AV: Invalid commitment");
 
-        // 1. Check Stake Bounds
+        // Check Stake Bounds
         require(_stake >= sigmaMin, "AV: Stake < min");
         if (sigmaMax > 0) {
             require(_stake <= sigmaMax, "AV: Stake > max");
         }
 
-        // 2. Check Registry for Eligibility
+        // Check Registry for Eligibility
         require(attestorRegistry.isRegistered(msg.sender), "AV: Not eligible"); // <-- REPLACED LOGIC
 
-        // 3. Store commitment
+        // Store commitment
         stakes[msg.sender] = _stake;
         commitments[msg.sender] = _commitment;
 
-        // 4. Pull stake token
+        // Pull stake token
         require(stakeToken.transferFrom(msg.sender, address(this), _stake), "AV: Stake transfer failed");
 
         emit Committed(msg.sender, assignedStream[msg.sender], _stake, _commitment);
@@ -337,18 +339,18 @@ contract AttestorVoting {
         require(commitment != bytes32(0), "AV: No commit");
         require(!revealed[msg.sender], "AV: Already revealed");
 
-        // 1. Verify the reveal matches the commitment
+        // Verify the reveal matches the commitment
         bytes32 hash = keccak256(abi.encodePacked(_choice, _salt));
         require(hash == commitment, "AV: Invalid reveal");
 
-        // 2. Store revealed state
+        // Store revealed state
         revealed[msg.sender] = true;
         revealedChoice[msg.sender] = _choice; // Store choice for claiming
         
         uint256 stake = stakes[msg.sender];
         uint8 stream = assignedStream[msg.sender];
 
-        // 3. Add stake to the correct stream's tally
+        // Add stake to the correct stream's tally
         Tally storage tally = tallies[stream];
         if (_choice == true) {
             tally.passStake += stake;
@@ -370,18 +372,18 @@ contract AttestorVoting {
         require(revealed[msg.sender], "AV: Not revealed");
         require(!hasClaimed[msg.sender], "AV: Already claimed");
 
-        // 1. Get stream and settlement data
+        // Get stream and settlement data
         uint8 stream = assignedStream[msg.sender];
         Settlement storage s = settlements[stream];
         require(s.settled, "AV: Stream not settled");
 
-        // 2. Check challenge window
+        // Check challenge window
         require(block.timestamp >= s.settledAt + challengeWindow, "AV: Challenge window active");
 
-        // 3. Mark as claimed before transfer (Checks-Effects-Interactions)
+        // Mark as claimed before transfer (Checks-Effects-Interactions)
         hasClaimed[msg.sender] = true;
 
-        // 4. Determine payout
+        // Determine payout
         uint256 payout = 0;
         bool attestorVotedTrue = revealedChoice[msg.sender];
         bool isWinner = (attestorVotedTrue == s.donorOutcomeTrue);
@@ -394,7 +396,7 @@ contract AttestorVoting {
         }
         // If not winner, payout remains 0 (stake is slashed).
 
-        // 5. Transfer funds (if any)
+        // Transfer funds (if any)
         if (payout > 0) {
             require(stakeToken.transfer(msg.sender, payout), "AV: Claim transfer failed");
         }
@@ -410,6 +412,34 @@ contract AttestorVoting {
      * Emits the final tallies.
      */
     function _finalize() internal {
+        bool _overall = true;
+        for (uint8 s = 0; s < NUM_STREAMS; s++) {
+            Tally memory tally = tallies[s];
+            
+            // Rule: Stream passes if "Pass" stake is strictly greater than "Fail" stake.
+            if (tally.passStake > tally.failStake) {
+                attestorStreamPassed[s] = true;
+            } else {
+                attestorStreamPassed[s] = false;
+                _overall = false; // If any stream fails, the overall result is false
+            }
+        }
+        attestorOverallPassed = _overall;
         emit Finalized(tallies);
+    }
+
+    /**
+     * @notice (Oracle) Aggregate attestor decision across all streams.
+     * @dev Call after contract is Finalized.
+     */
+    function overallResult()
+        external
+        view
+        returns (bool decided, bool passed)
+    {
+        if (phase != Phase.Finalized) {
+            return (false, false);
+        }
+        return (true, attestorOverallPassed);
     }
 }

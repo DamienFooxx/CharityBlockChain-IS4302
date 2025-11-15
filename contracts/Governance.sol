@@ -49,14 +49,13 @@ contract Governance is AccessControl, Pausable {
         _grantRole(PAUSER_ROLE, msg.sender); // Deployer can also pause
         
         // Set initial parameters
-        require(initialQuorumBps <= 10000, "Quorum Bps > 100%"); // Added check here
-        require(initialPassMajorityBps <= 10000, "Majority Bps > 100%"); // <-- ADDED check
-
+        require(initialQuorumBps <= 10000, "Quorum Bps > 100%");
+        require(initialPassMajorityBps <= 10000, "Majority Bps > 100%"); 
         globalQuorumBps = initialQuorumBps;
-        globalPassMajorityBps = initialPassMajorityBps; // <-- ADDED
+        globalPassMajorityBps = initialPassMajorityBps;
 
         emit QuorumUpdated(initialQuorumBps);
-        emit PassMajorityUpdated(initialPassMajorityBps); // <-- ADDED
+        emit PassMajorityUpdated(initialPassMajorityBps);
     }
 
     // --- Role-Protected Functions (Parameter Management) ---

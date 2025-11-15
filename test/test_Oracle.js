@@ -236,6 +236,88 @@ describe("Oracle", function () {
       expect(passed).to.equal(didPass);
     };
 
+    // Helper to run a full attestor vote
+    // Note: For AttestorVoting to pass overall, ALL streams must have passStake > failStake
+    // So we need at least one attestor per stream voting "Pass"
+    const runFullAttestorVote = async (didPass) => {
+      const { commitTime, revealTime } = await getDeadlines();
+      
+      // Set sigma bounds (min 100, max 1000)
+      await oracleContract.connect(oracle).setAttestorSigmaBounds(eventId, 100n, 1000n);
+      
+      // Register and assign attestors to all 3 streams
+      // We need 3 different attestors, so we'll use attestor1 and register 'other' and get one more signer
+      const allSigners = await ethers.getSigners();
+      const attestor2 = other; // Use 'other' as attestor2 (index 7)
+      // Get a signer that's not already used (Hardhat provides 20 signers by default)
+      const attestor3 = allSigners.length > 8 ? allSigners[8] : allSigners[9]; // Use index 8 or 9
+      
+      // Register additional attestors (attestor1 is already registered in fixture)
+      await attestorRegistry.connect(owner).setAttestorRegistration(attestor2.address, true);
+      await attestorRegistry.connect(owner).setAttestorRegistration(attestor3.address, true);
+      await sgdCoin.connect(owner).mint(attestor2.address, 1000n);
+      await sgdCoin.connect(owner).mint(attestor3.address, 1000n);
+      
+      // Assign attestors to different streams
+      await oracleContract.connect(oracle).assignAttestor(eventId, attestor1.address, 0);
+      await oracleContract.connect(oracle).assignAttestor(eventId, attestor2.address, 1);
+      await oracleContract.connect(oracle).assignAttestor(eventId, attestor3.address, 2);
+      
+      // Set deadlines for AttestorVoting only (DonorVoting is already finalized)
+      // Check if AttestorVoting is still in Pending phase and deadlines are not set
+      // If deadlines were already set by runFullDonorVote, we skip setting them again
+      const currentPhase = await attestorVoting.phase();
+      const currentCommitDeadline = await attestorVoting.commitDeadline();
+      if (currentPhase === 0 && currentCommitDeadline === 0n) { // Phase.Pending = 0 and no deadline set
+        // We call adjustDeadline directly on AttestorVoting to avoid adjusting DonorVoting deadlines
+        await attestorVoting.connect(oracle).adjustDeadline(commitTime, revealTime);
+      }
+      // If phase is not Pending or deadlines are already set, we proceed with existing deadlines
+      
+      // Advance to Commit phase
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId);
+      
+      // All attestors commit
+      const stakeAmount = 500n;
+      const attestors = [attestor1, attestor2, attestor3];
+      const salts = {};
+      
+      for (const attestor of attestors) {
+        const salt = ethers.id(`ATTESTOR_SALT_${attestor.address}`);
+        salts[attestor.address] = salt;
+        const commitment = ethers.solidityPackedKeccak256(
+          ["bool", "uint256"],
+          [didPass, salt]
+        );
+        
+        // Approve stake transfer
+        await sgdCoin.connect(attestor).approve(attestorVoting.target, stakeAmount);
+        
+        // Commit
+        await attestorVoting.connect(attestor).commit(commitment, stakeAmount);
+      }
+      
+      // Advance to Reveal phase
+      await advanceTime(101);
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId);
+      
+      // All attestors reveal
+      for (const attestor of attestors) {
+        await attestorVoting.connect(attestor).reveal(didPass, salts[attestor.address]);
+      }
+      
+      // Advance to Finalized
+      await advanceTime(101);
+      await oracleContract.connect(oracle).advanceAttestorPhase(eventId);
+      
+      // Verify outcome
+      const [decided, passed] = await attestorVoting.overallResult();
+      expect(decided).to.be.true;
+      // If didPass is true, all streams should have passStake > failStake, so overall should be true
+      // If didPass is false, all streams will have failStake > passStake, so overall should be false
+      expect(passed).to.equal(didPass);
+    };
+
     return {
       oracleContract,
       governance,
@@ -261,6 +343,7 @@ describe("Oracle", function () {
       advanceTime,
       getDeadlines,
       runFullDonorVote,
+      runFullAttestorVote,
     };
   }
 
@@ -487,28 +570,26 @@ describe("Oracle", function () {
         charityTreasury,
         sgdCoin,
         runFullDonorVote,
+        runFullAttestorVote,
         advanceTime,
         charityOwner,
       } = fixture;
       // 1. Run donor vote to PASS (true)
       await runFullDonorVote(true);
 
-      // 2. --- FIX: Advance CharityEvent to VERIFICATION phase ---
+      // 2. Run attestor vote to PASS (true) - both must pass for disbursement
+      await runFullAttestorVote(true);
+
+      // 3. Advance CharityEvent to VERIFICATION phase
       await charityEvent.connect(charityOwner).closeFunding(); // Phase: FUNDING -> CLOSED
       await charityEvent.connect(charityOwner).submitEvidence("ipfs://cid"); // Phase: CLOSED -> VERIFICATION
-
-      // 3. Advance AttestorVoting to Finalized (since it wasn't used)
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Commit
-      await advanceTime(101);
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Reveal
-      await advanceTime(101);
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Finalized
 
       // 4. Call settleAttestors
       await oracleContract.connect(oracle).settleAttestors(eventId);
 
       // 5. Call disburse
       // This will now call setVerified() on the CharityEvent, which is in the correct VERIFICATION phase
+      // Both DonorVoting and AttestorVoting have passed, so the event should be APPROVED
       await expect(oracleContract.connect(oracle).disburseIfVerified(eventId))
         .to.emit(oracleContract, "Disbursed")
         .withArgs(eventId, charityTreasury.target);
@@ -541,18 +622,17 @@ describe("Oracle", function () {
         charityEvent,
         escrowVault,
         runFullDonorVote,
+        runFullAttestorVote,
+        charityOwner,
         advanceTime,
       } = fixture;
 
       // 1. Run donor vote to FAIL (false)
       await runFullDonorVote(false);
+      await runFullAttestorVote(false);
 
-      // 2. Advance AttestorVoting to Finalized (since it wasn't used)
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Commit
-      await advanceTime(101);
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Reveal
-      await advanceTime(101);
-      await oracleContract.connect(oracle).advanceAttestorPhase(eventId); // -> Finalized
+      await charityEvent.connect(charityOwner).closeFunding();
+      await charityEvent.connect(charityOwner).submitEvidence("ipfs://cid");
 
       // 3. Call settleAttestors
       await oracleContract.connect(oracle).settleAttestors(eventId);
@@ -560,10 +640,11 @@ describe("Oracle", function () {
       // 4. Call disburse - should REVERT
       await expect(
         oracleContract.connect(oracle).disburseIfVerified(eventId)
-      ).to.be.revertedWith("OracleAstraea: not verified");
+      ).to.not.emit(oracleContract, "Disbursed");
 
       // 5. Check effects
       expect(await charityEvent.verified()).to.be.false;
+      expect(await charityEvent.phase()).to.equal(5);
       expect(await escrowVault.released(eventId)).to.be.false;
     });
 
@@ -573,6 +654,49 @@ describe("Oracle", function () {
       await expect(
         oracleContract.connect(oracle).disburseIfVerified(eventId)
       ).to.be.revertedWith("OracleAstraea: donor not decided");
+    });
+
+    it("4d) disburseIfVerified: FAIL path (misalignment)", async () => {
+      const fixture = await loadFixture(fixtureWithModules);
+      const {
+        oracleContract,
+        oracle,
+        charityEvent,
+        escrowVault,
+        charityTreasury,
+        sgdCoin,
+        runFullDonorVote,
+        runFullAttestorVote,
+        advanceTime,
+        charityOwner,
+      } = fixture;
+
+      // Run donor vote to PASS (true)
+      await runFullDonorVote(true);
+
+      // Run attestor vote to FAIL (false)
+      await runFullAttestorVote(false);
+
+      // Advance CharityEvent to VERIFICATION phase
+      await charityEvent.connect(charityOwner).closeFunding(); // Phase: FUNDING -> CLOSED
+      await charityEvent.connect(charityOwner).submitEvidence("ipfs://cid"); // Phase: CLOSED -> VERIFICATION
+
+      await oracleContract.connect(oracle).settleAttestors(eventId);
+
+      await expect(oracleContract.connect(oracle).disburseIfVerified(eventId))
+        .to.not.emit(oracleContract, "Disbursed");
+
+      // Check effects
+      expect(await charityEvent.verified()).to.be.false;
+      expect(await charityEvent.phase()).to.equal(5);
+      
+      // 7. Verify NO funds were released
+      expect(await escrowVault.released(eventId)).to.be.false;
+      const orgIdFromEvent = await charityEvent.orgId();
+      const treasuryRecord = await charityTreasury.treasuries(orgIdFromEvent);
+      expect(treasuryRecord.totalBalance).to.equal(0n);
+      const tokenBal = await sgdCoin.balanceOf(charityTreasury.target);
+      expect(tokenBal).to.equal(0n);
     });
   });
 
@@ -625,7 +749,7 @@ describe("Oracle", function () {
       const oldModules = await oracleContract.modules(eventId);
       const oldSeed = await oracleContract.voterAssignmentSeed();
 
-      // Deploy NEW modules for the retry
+      // Deploy modules for the retry
       const newDonorVoting = await (
         await ethers.getContractFactory("DonorVoting")
       ).deploy(

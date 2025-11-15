@@ -14,7 +14,7 @@ contract CharityRegistry is Registry {
     // Charity profile structure
     struct CharityProfile {
         string name;
-        string metaCID; // IPFS content identifier for metadata
+        string metaCID;
         bool approved;
         address treasury;
         uint256 registrationTime;
@@ -53,7 +53,7 @@ contract CharityRegistry is Registry {
     constructor(address _governance) Registry(_governance) {
     }
     
-    // --- Registration Functions ---
+    // Registration Functions 
     
     /**
      * @dev Register a new charity
@@ -113,7 +113,7 @@ contract CharityRegistry is Registry {
         emit ProfileUpdated(orgId, metaCID);
     }
     
-    // --- Approval Functions ---
+    // Approval Functions 
     
     /**
      * @dev Approve or disapprove a charity
@@ -140,7 +140,7 @@ contract CharityRegistry is Registry {
         emit CharityApproved(orgId, isApproved);
     }
     
-    // --- Treasury Management ---
+    // Treasury Management 
     
     /**
      * @dev Assign a treasury contract to a charity
@@ -162,11 +162,11 @@ contract CharityRegistry is Registry {
         emit TreasuryAssigned(orgId, treasury);
     }
     
-    // --- View Functions ---
+    // View Functions 
     
     // removed unnecessary getters; use public getters on mappings/state instead
 
-    // --- Compatibility Wrapper API ---
+    //  Compatibility Wrapper API 
     /**
      * @notice Adds a charity by wallet with a metadata hash.
      * @dev If called by an admin, registers the provided wallet. If called by the wallet itself,
