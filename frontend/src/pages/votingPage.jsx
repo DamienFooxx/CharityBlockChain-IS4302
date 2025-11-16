@@ -31,7 +31,6 @@ export default function VotingPage() {
   const [attestorVotingAddr, setAttestorVotingAddr] = useState("");
 
   const [eventSummary, setEventSummary] = useState(null);
-  const [overallResult, setOverallResult] = useState(null);
   const [donorPhase, setDonorPhase] = useState(null);
   const [deadlineInfo, setDeadlineInfo] = useState(null);
   const [modulesStatus, setModulesStatus] = useState(null);
@@ -246,20 +245,6 @@ export default function VotingPage() {
     }
   }
 
-  async function refreshOverall() {
-    if (!donorVotingAddr) return;
-    try {
-      const dv = new ethers.Contract(donorVotingAddr, DonorVotingArtifact.abi, provider);
-      const result = await dv.overallResult();
-      setOverallResult({
-        decided: result[0],
-        passed: result[1],
-        perStream: result[2],
-      });
-    } catch (e) {
-      setStatus("Failed to fetch overall result: " + (e.message || e));
-    }
-  }
 
   async function deployDonorVoting() {
     if (!adminWallet) return setStatus("Admin wallet not ready");
@@ -651,7 +636,6 @@ export default function VotingPage() {
       await tx.wait();
       setStatus("Donor phase advanced");
       await refreshDonorPhase();
-      await refreshOverall();
     } catch (e) {
       const errorMsg = e.reason || e.message || String(e);
       setStatus("advanceDonorPhase failed: " + errorMsg);
@@ -758,7 +742,6 @@ export default function VotingPage() {
     
     setStatus(`✓ Revealed ${successCount} donors (${failCount} failed)`);
     await refreshDonorPhase();
-    await refreshOverall();
   }
 
   async function attestorCommit() {
@@ -962,32 +945,6 @@ export default function VotingPage() {
     setStatus(`✓ Revealed ${successCount} attestors (${failCount} failed)`);
   }
 
-  async function doSettleAttestors() {
-    if (!eventId) return setStatus("Need eventId");
-    try {
-      const oracle = await oracleContract();
-      const tx = await oracle.settleAttestors(eventId);
-      setStatus("settleAttestors tx: " + tx.hash);
-      await tx.wait();
-      setStatus("Attestors settled");
-    } catch (e) {
-      setStatus("settleAttestors failed: " + (e.message || e));
-    }
-  }
-
-  async function doDisburse() {
-    if (!eventId) return setStatus("Need eventId");
-    try {
-      const oracle = await oracleContract();
-      const tx = await oracle.disburseIfVerified(eventId);
-      setStatus("disburseIfVerified tx: " + tx.hash);
-      await tx.wait();
-      setStatus("Disbursement executed (if verified)");
-      await loadEventSummary(eventAddress);
-    } catch (e) {
-      setStatus("Disburse failed: " + (e.message || e));
-    }
-  }
 
   function donorOptions() {
     const opts = [];
@@ -1448,24 +1405,6 @@ export default function VotingPage() {
             </ul>
           </div>
         </div>
-      </section>
-
-      <section style={{ marginBottom: 16 }}>
-        <h3>Results & Settlement</h3>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-          <button onClick={refreshOverall}>Refresh Overall Result</button>
-          <button onClick={doSettleAttestors}>Settle Attestors</button>
-          <button onClick={doDisburse}>Disburse If Verified</button>
-        </div>
-        {overallResult ? (
-          <div style={{ fontSize: 14 }}>
-            <div>Decided: {String(overallResult.decided)}</div>
-            <div>Passed: {String(overallResult.passed)}</div>
-            <div>Per stream: [{overallResult.perStream?.join(", ")}]</div>
-          </div>
-        ) : (
-          <div style={{ color: "#777" }}>No voting result yet.</div>
-        )}
       </section>
         </div>
 

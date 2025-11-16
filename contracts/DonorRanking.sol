@@ -114,12 +114,10 @@ contract DonorRanking is Registry {
     /**
      * @dev Record a new donation and update stats
      * @param _donor Address of the donor
-     * @param _eventId ID of the event
      * @param _amount Amount donated
      */
     function recordDonation(
         address _donor,
-        bytes32 _eventId,
         uint256 _amount
     ) 
         external 
@@ -145,9 +143,8 @@ contract DonorRanking is Registry {
     /**
      * @dev Record voting participation
      * @param _donor Address of the donor
-     * @param _eventId ID of the event
      */
-    function recordVoting(address _donor, bytes32 _eventId) 
+    function recordVoting(address _donor) 
         external 
         onlyAuthorized
         whenNotPaused
@@ -165,9 +162,8 @@ contract DonorRanking is Registry {
     /**
      * @dev Record successful event outcome
      * @param _donor Address of the donor
-     * @param _eventId ID of the event
      */
-    function recordSuccessfulEvent(address _donor, bytes32 _eventId) 
+    function recordSuccessfulEvent(address _donor) 
         external 
         onlyAuthorized
         whenNotPaused
@@ -214,11 +210,10 @@ contract DonorRanking is Registry {
             newScore = MAX_SCORE;
         }
         
-        uint256 oldScore = stats.reputationScore;
         stats.reputationScore = newScore;
         
         // Update tier if needed
-        _updateDonorTier(_donor, oldScore, newScore);
+        _updateDonorTier(_donor, newScore);
         
         // Update leaderboard
         _updateLeaderboard(_donor);
@@ -262,12 +257,10 @@ contract DonorRanking is Registry {
     /**
      * @dev Update donor's tier based on reputation score
      * @param _donor Address of the donor
-     * @param _oldScore Previous reputation score
      * @param _newScore New reputation score
      */
     function _updateDonorTier(
         address _donor,
-        uint256 _oldScore,
         uint256 _newScore
     ) internal {
         uint256 oldTier = donorTier[_donor];
