@@ -135,7 +135,6 @@ contract EscrowVault is Registry {
         require(to != address(0), "EscrowVault: zero to");
         require(!released[eventId], "EscrowVault: already released");
 
-        uint256 total = 0;
         uint256[] storage pids = eventPledgeIds[eventId];
         for (uint256 i = 0; i < pids.length; i++) {
             uint256 pid = pids[i];

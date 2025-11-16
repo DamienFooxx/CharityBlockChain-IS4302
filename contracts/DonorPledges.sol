@@ -177,8 +177,8 @@ contract DonorPledges is Registry {
             // Get the modules struct from the Oracle
             Oracle oracle = Oracle(oracleAddr);
             (
-                address donorVoting,
-                address attestorVoting,
+                ,
+                ,
                 address charityEvent
             ) = oracle.modules(_eventId);
 

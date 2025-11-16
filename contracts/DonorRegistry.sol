@@ -161,8 +161,6 @@ contract DonorRegistry is Registry {
             address donorAddress,
             string memory name,
             string memory metaCID,
-            bool isDonorRegistered,
-            bool isDonorVerified,
             uint256 registrationTime
         )
     {
@@ -171,8 +169,6 @@ contract DonorRegistry is Registry {
             profile.donorAddress,
             profile.name,
             profile.metaCID,
-            profile.isDonorRegistered,
-            profile.isDonorVerified,
             profile.registrationTime
         );
     }
