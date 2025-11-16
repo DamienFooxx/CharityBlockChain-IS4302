@@ -5,8 +5,11 @@
 const hre = require("hardhat");
 
 async function main() {
-  const [deployer] = await hre.ethers.getSigners();
+  const signers = await hre.ethers.getSigners();
+  const deployer = signers[0];
+  const oracleAccount = signers[19]; // Account 19 is the oracle
   console.log("Deploying contracts with account:", deployer.address);
+  console.log("Oracle account:", oracleAccount.address);
 
   const GasEstimator = (tx) => tx.wait().then(() => {});
 
@@ -69,7 +72,11 @@ async function main() {
   console.log("EscrowVault deployed:", escrow.target);
 
   const DonorPledges = await hre.ethers.getContractFactory("DonorPledges");
-  const donorPledges = await DonorPledges.deploy(governance.target, sgd.target);
+  const donorPledges = await DonorPledges.deploy(
+    governance.target,
+    sgd.target,
+    donorRegistry.target
+  );
   await donorPledges.waitForDeployment();
   console.log("DonorPledges deployed:", donorPledges.target);
 
@@ -132,6 +139,22 @@ async function main() {
   );
   await oracle.waitForDeployment();
   console.log("Oracle deployed:", oracle.target);
+
+  // Grant ORACLE_ROLE to account 19 AND the Oracle contract itself
+  const ORACLE_ROLE = await governance.ORACLE_ROLE();
+
+  // Grant to account 19 (so they can call Oracle functions like setModules, setDeadlines, etc.)
+  const grantTx1 = await governance.grantRole(
+    ORACLE_ROLE,
+    oracleAccount.address
+  );
+  await grantTx1.wait();
+  console.log("Granted ORACLE_ROLE to account 19:", oracleAccount.address);
+
+  // Grant to Oracle contract (so it can call DonorVoting.adjustDeadline, AttestorVoting.adjustDeadline, etc.)
+  const grantTx2 = await governance.grantRole(ORACLE_ROLE, oracle.target);
+  await grantTx2.wait();
+  console.log("Granted ORACLE_ROLE to Oracle contract:", oracle.target);
 
   // 11) Wire addresses into Governance registry (so modules can look them up)
   const setAddr = async (name, addr) => {

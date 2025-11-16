@@ -7,7 +7,7 @@ import AttestorVotingArtifact from "../abi/AttestorVoting.json";
 import OracleArtifact from "../abi/Oracle.json";
 import DonorRegistryArtifact from "../abi/DonorRegistry.json";
 import DonorRankingArtifact from "../abi/DonorRanking.json";
-import DonorPledgesArtifact from "../abi/DonorPledges.json";
+import EscrowVaultArtifact from "../abi/EscrowVault.json";
 import AttestorRegistryArtifact from "../abi/AttestorRegistry.json";
 import SGDCoinArtifact from "../abi/SGDCoin.json";
 import { getWallets } from "../utils/wallets";
@@ -39,11 +39,19 @@ export default function VotingPage() {
   // Input helpers
   const [assignDonorIndex, setAssignDonorIndex] = useState(1);
   const [assignStream, setAssignStream] = useState(0);
+  const [assignAttestorIndex, setAssignAttestorIndex] = useState(11);
+  const [assignAttestorStream, setAssignAttestorStream] = useState(0);
   const [commitDonorIndex, setCommitDonorIndex] = useState(1);
   const [commitChoice, setCommitChoice] = useState("true");
+  const [commitAttestorIndex, setCommitAttestorIndex] = useState(11);
+  const [commitAttestorChoice, setCommitAttestorChoice] = useState("true");
+  const [attestorStake, setAttestorStake] = useState("1000"); // Default 1000 SGD
 
   const [saltCache, setSaltCache] = useState({});
+  const [attestorSaltCache, setAttestorSaltCache] = useState({});
   const [events, setEvents] = useState([]);
+  const [donorPledgesList, setDonorPledgesList] = useState([]);
+  const [donorStreamSelections, setDonorStreamSelections] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -71,9 +79,66 @@ export default function VotingPage() {
   useEffect(() => {
     if (eventId) {
       checkModulesStatus();
+      fetchDonorsWithPledges();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
+
+  async function fetchDonorsWithPledges() {
+    if (!eventId) return;
+    try {
+      setStatus("Fetching donors with pledges...");
+      
+      // Use EscrowVault to get pledge information via events
+      const escrowContract = new ethers.Contract(
+        addresses.EscrowVault,
+        EscrowVaultArtifact.abi,
+        provider
+      );
+
+      // Query PledgeDeposited events for this eventId
+      const filter = escrowContract.filters.PledgeDeposited(null, eventId);
+      const events = await escrowContract.queryFilter(filter);
+      
+      // Group pledges by donor
+      const donorMap = new Map();
+      
+      for (const event of events) {
+        const pledgeId = event.args.pledgeId;
+        const donorAddr = event.args.donor;
+        const amount = event.args.amount;
+        
+        // Check if pledge is still active
+        const isActive = await escrowContract.pledgeActive(pledgeId);
+        
+        if (isActive) {
+          if (donorMap.has(donorAddr)) {
+            donorMap.get(donorAddr).amount += amount;
+          } else {
+            donorMap.set(donorAddr, {
+              address: donorAddr,
+              amount: amount,
+            });
+          }
+        }
+      }
+      
+      const donorsList = Array.from(donorMap.values());
+      setDonorPledgesList(donorsList);
+      
+      // Initialize stream selections to 0
+      const initialSelections = {};
+      donorsList.forEach(donor => {
+        initialSelections[donor.address] = 0;
+      });
+      setDonorStreamSelections(initialSelections);
+      
+      setStatus(`Found ${donorsList.length} donors with pledges`);
+    } catch (e) {
+      console.error("Failed to fetch donors:", e);
+      setStatus("Failed to fetch donors: " + (e.message || e));
+    }
+  }
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(rpcUrl), []);
 
@@ -249,8 +314,10 @@ export default function VotingPage() {
   }
 
   async function oracleContract() {
-    if (!adminWallet) throw new Error("Admin wallet not ready");
-    return new ethers.Contract(addresses.Oracle, OracleArtifact.abi, adminWallet);
+    // Account 19 has ORACLE_ROLE (set in deployment script)
+    const oracleWallet = wallets[19];
+    if (!oracleWallet) throw new Error("Oracle wallet (index 19) not ready");
+    return new ethers.Contract(addresses.Oracle, OracleArtifact.abi, oracleWallet);
   }
 
   async function checkModulesStatus() {
@@ -327,40 +394,93 @@ export default function VotingPage() {
   }
 
   async function doSetDeadlines() {
-    if (!eventId || !donorVotingAddr || !attestorVotingAddr) {
-      return setStatus("Need modules set first");
+    console.log("=== doSetDeadlines called ===");
+    console.log("eventId:", eventId);
+    console.log("donorVotingAddr (local state):", donorVotingAddr);
+    console.log("attestorVotingAddr (local state):", attestorVotingAddr);
+    
+    if (!eventId) {
+      console.log("FAILED: No eventId");
+      return setStatus("Need eventId first");
     }
+    
     try {
-      const now = Math.floor(Date.now() / 1000);
-      const commit = now + 60;
-      const reveal = commit + 60;
+      // Fetch modules from Oracle contract (they might have been set in eventsPage)
+      console.log("Getting oracle contract with wallet 19...");
+      const oracle = await oracleContract();
+      console.log("Oracle contract obtained, reading modules for eventId:", eventId);
+      
+      const modules = await oracle.modules(eventId);
+      console.log("Modules read from contract:");
+      console.log("  donor:", modules.donor);
+      console.log("  attestor:", modules.attestor);
+      console.log("  charity:", modules.charity);
+      
+      if (modules.donor === ethers.ZeroAddress || modules.attestor === ethers.ZeroAddress) {
+        console.log("FAILED: Modules not set in contract");
+        setStatus(`Cannot set deadlines: Modules not set in Oracle. Please set up voting modules first.`);
+        await checkModulesStatus();
+        return;
+      }
+      
+      // Update local state with the addresses from Oracle
+      if (!donorVotingAddr && modules.donor !== ethers.ZeroAddress) {
+        console.log("Updating local donorVotingAddr from Oracle:", modules.donor);
+        setDonorVotingAddr(modules.donor);
+      }
+      if (!attestorVotingAddr && modules.attestor !== ethers.ZeroAddress) {
+        console.log("Updating local attestorVotingAddr from Oracle:", modules.attestor);
+        setAttestorVotingAddr(modules.attestor);
+      }
+      
+      console.log("Modules verified successfully");
+      setStatus(`Modules verified - Donor: ${short(modules.donor)}, Attestor: ${short(modules.attestor)}`);
+      
+      // CRITICAL: Use blockchain timestamp, NOT system time
+      // System time can be ahead of blockchain time causing "Commit in past" error
+      const latestBlock = await provider.getBlock('latest');
+      const blockTime = Number(latestBlock.timestamp);
+      const systemTime = Math.floor(Date.now() / 1000);
+      
+      console.log("Time check:");
+      console.log("  Blockchain timestamp:", blockTime);
+      console.log("  System time:", systemTime);
+      console.log("  Difference (system - blockchain):", systemTime - blockTime, "seconds");
+      
+      // Use blockchain time + buffer
+      const commit = blockTime + 120;  // 2 minutes from blockchain time
+      const reveal = commit + 120;     // 4 minutes total
       const commit2 = commit;
       const reveal2 = reveal;
       
-      const oracle = await oracleContract();
+      console.log("Calculated deadlines (using blockchain time):");
+      console.log("  donorCommit:", commit, `(+${commit - blockTime}s from now)`);
+      console.log("  donorReveal:", reveal, `(+${reveal - blockTime}s from now)`);
+      console.log("  attestorCommit:", commit2, `(+${commit2 - blockTime}s from now)`);
+      console.log("  attestorReveal:", reveal2, `(+${reveal2 - blockTime}s from now)`);
+      
       setStatus(`Setting deadlines: commit=${commit}, reveal=${reveal}...`);
+      console.log("Calling oracle.setDeadlines...");
       const tx = await oracle.setDeadlines(eventId, commit, reveal, commit2, reveal2);
+      console.log("Transaction sent:", tx.hash);
       setStatus("setDeadlines tx: " + tx.hash);
+      console.log("Waiting for transaction confirmation...");
       const receipt = await tx.wait();
+      console.log("Transaction receipt:", receipt);
       
       // Check if transaction reverted
       if (receipt.status === 0) {
+        console.log("ERROR: Transaction reverted");
         return setStatus("setDeadlines transaction reverted. Check if phase is Pending.");
       }
+      console.log("Transaction confirmed successfully");
       
       // Wait a bit for state to update
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Try to get the actual DonorVoting address from Oracle to verify
-      let actualDonorAddr = donorVotingAddr;
-      try {
-        const modules = await oracle.modules(eventId);
-        if (modules && modules.donor !== ethers.ZeroAddress) {
-          actualDonorAddr = modules.donor;
-        }
-      } catch (e) {
-        // If we can't read modules, use the input address
-      }
+      // Use the donor address from the modules we already fetched
+      const actualDonorAddr = modules.donor;
+      console.log("Verifying deadlines on DonorVoting contract:", actualDonorAddr);
       
       // Verify deadlines were set on the actual contract
       const dv = new ethers.Contract(actualDonorAddr, DonorVotingArtifact.abi, provider);
@@ -368,8 +488,10 @@ export default function VotingPage() {
       const revealDeadline = Number(await dv.revealDeadline());
       
       if (commitDeadline === 0 || revealDeadline === 0) {
+        console.log("WARNING: Deadlines may not have been set properly");
         setStatus(`Warning: Deadlines may not have been set. Commit: ${commitDeadline}, Reveal: ${revealDeadline}. Reading from: ${short(actualDonorAddr)}`);
       } else {
+        console.log("SUCCESS: Deadlines set successfully");
         setStatus(`Deadlines set successfully! Commit: ${commitDeadline}, Reveal: ${revealDeadline}`);
       }
       
@@ -377,11 +499,20 @@ export default function VotingPage() {
       await refreshDeadlineInfo();
       await refreshDonorPhase();
     } catch (e) {
+      console.error("=== ERROR in doSetDeadlines ===");
+      console.error("Error object:", e);
+      console.error("Error reason:", e.reason);
+      console.error("Error message:", e.message);
+      console.error("Error code:", e.code);
+      console.error("Error data:", e.data);
+      
       const errorMsg = e.reason || e.message || String(e);
       if (errorMsg.includes("donor module not set") || errorMsg.includes("attestor module not set") || errorMsg.includes("eventExists")) {
+        console.log("ERROR TYPE: Modules not set");
         setStatus("setDeadlines failed: Modules not set in Oracle. Please call 'Set Modules' first.");
         await checkModulesStatus();
       } else {
+        console.log("ERROR TYPE: Other error");
         setStatus("setDeadlines failed: " + errorMsg);
       }
     }
@@ -400,6 +531,85 @@ export default function VotingPage() {
       setStatus(`Assigned donor ${short(addr)} to stream ${assignStream}`);
     } catch (e) {
       setStatus("assignVoter failed: " + (e.message || e));
+    }
+  }
+
+  async function assignSpecificDonor(donorAddress, stream) {
+    if (!eventId || !donorVotingAddr) return setStatus("Set event & donorVoting");
+    try {
+      const oracle = await oracleContract();
+      const tx = await oracle.assignVoter(eventId, donorAddress, Number(stream));
+      setStatus(`Assigning ${short(donorAddress)} to stream ${stream}...`);
+      const receipt = await tx.wait();
+      
+      // Log the event
+      setEvents((prev) => [
+        {
+          id: Date.now() + Math.random(),
+          type: 'DonorAssigned',
+          eventId: eventId,
+          donor: donorAddress,
+          stream: stream,
+          tx: tx.hash,
+        },
+        ...prev,
+      ]);
+      
+      setStatus(`✓ Assigned donor ${short(donorAddress)} to stream ${stream}`);
+    } catch (e) {
+      setStatus(`Failed to assign ${short(donorAddress)}: ` + (e.message || e));
+    }
+  }
+
+  async function doAssignAttestor() {
+    console.log("\n=== ASSIGN ATTESTOR START ===");
+    console.log("eventId:", eventId);
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("assignAttestorIndex:", assignAttestorIndex);
+    console.log("assignAttestorStream:", assignAttestorStream);
+    
+    if (!eventId || !attestorVotingAddr) {
+      console.error("FAILED: Missing eventId or attestorVotingAddr");
+      return setStatus("Set event & attestorVoting");
+    }
+    
+    const wallet = wallets[assignAttestorIndex];
+    if (!wallet) {
+      console.error("FAILED: No wallet at index", assignAttestorIndex);
+      return setStatus("No wallet at index " + assignAttestorIndex);
+    }
+    
+    try {
+      const oracle = await oracleContract();
+      const addr = await wallet.getAddress();
+      console.log("Attestor address:", addr);
+      
+      // Check if attestor is registered in AttestorRegistry
+      const registry = new ethers.Contract(addresses.AttestorRegistry, AttestorRegistryArtifact.abi, provider);
+      const isRegistered = await registry.isRegistered(addr);
+      console.log("Is registered in AttestorRegistry:", isRegistered);
+      
+      if (!isRegistered) {
+        console.error("FAILED: Attestor not registered!");
+        return setStatus(`Attestor ${short(addr)} is NOT registered. Please register them first on the Attestors page.`);
+      }
+      
+      console.log("Calling oracle.assignAttestor()...");
+      const tx = await oracle.assignAttestor(eventId, addr, Number(assignAttestorStream));
+      console.log("Assign tx hash:", tx.hash);
+      setStatus("assignAttestor tx: " + tx.hash);
+      
+      await tx.wait();
+      console.log("✓ Assignment confirmed");
+      setStatus(`✓ Assigned attestor ${short(addr)} to stream ${assignAttestorStream}`);
+      
+      console.log("=== ASSIGN ATTESTOR SUCCESS ===\n");
+    } catch (e) {
+      console.error("=== ASSIGN ATTESTOR FAILED ===");
+      console.error("Error:", e);
+      console.error("Error message:", e.message);
+      console.error("Error reason:", e.reason);
+      setStatus("assignAttestor failed: " + (e.reason || e.message || e));
     }
   }
 
@@ -506,23 +716,250 @@ export default function VotingPage() {
     }
   }
 
-  async function donorReveal(index) {
+  async function donorReveal() {
     if (!donorVotingAddr) return setStatus("DonorVoting address missing");
-    const wallet = wallets[index];
-    if (!wallet) return setStatus("No wallet at index " + index);
-    const data = saltCache[index];
-    if (!data) return setStatus("No cached commit for donor " + index);
-    try {
-      const contract = new ethers.Contract(donorVotingAddr, DonorVotingArtifact.abi, wallet);
-      const tx = await contract.reveal(data.choice, data.salt);
-      setStatus("reveal tx: " + tx.hash);
-      await tx.wait();
-      setStatus(`Reveal confirmed for donor ${index}`);
-      await refreshDonorPhase();
-      await refreshOverall();
-    } catch (e) {
-      setStatus("Reveal failed: " + (e.message || e));
+    
+    // Get all cached donor commits
+    const cachedDonors = Object.keys(saltCache).map(Number);
+    if (cachedDonors.length === 0) {
+      return setStatus("No cached donor commits to reveal");
     }
+    
+    setStatus(`Revealing votes for ${cachedDonors.length} donors...`);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const index of cachedDonors) {
+      const wallet = wallets[index];
+      if (!wallet) {
+        console.warn(`No wallet at index ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      const data = saltCache[index];
+      if (!data) {
+        console.warn(`No cached commit for donor ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      try {
+        const contract = new ethers.Contract(donorVotingAddr, DonorVotingArtifact.abi, wallet);
+        const tx = await contract.reveal(data.choice, data.salt);
+        await tx.wait();
+        successCount++;
+        setStatus(`Revealed ${successCount}/${cachedDonors.length} donors...`);
+      } catch (e) {
+        console.error(`Failed to reveal donor ${index}:`, e);
+        failCount++;
+      }
+    }
+    
+    setStatus(`✓ Revealed ${successCount} donors (${failCount} failed)`);
+    await refreshDonorPhase();
+    await refreshOverall();
+  }
+
+  async function attestorCommit() {
+    console.log("\n=== ATTESTOR COMMIT START ===");
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("commitAttestorIndex:", commitAttestorIndex);
+    console.log("commitAttestorChoice:", commitAttestorChoice);
+    console.log("attestorStake:", attestorStake);
+    
+    if (!attestorVotingAddr) {
+      console.error("FAILED: AttestorVoting address missing");
+      return setStatus("AttestorVoting address missing");
+    }
+    
+    const wallet = wallets[commitAttestorIndex];
+    if (!wallet) {
+      console.error("FAILED: No wallet at index", commitAttestorIndex);
+      return setStatus("No wallet at index " + commitAttestorIndex);
+    }
+    
+    const walletAddr = await wallet.getAddress();
+    console.log("Attestor wallet address:", walletAddr);
+    
+    try {
+      // Check SGD balance
+      const sgd = new ethers.Contract(addresses.SGDCoin, SGDCoinArtifact.abi, wallet);
+      const balance = await sgd.balanceOf(walletAddr);
+      console.log("SGD balance:", ethers.formatUnits(balance, 18), "SGD");
+      
+      const stakeWei = ethers.parseUnits(attestorStake, 18);
+      console.log("Stake amount (wei):", stakeWei.toString());
+      console.log("Stake amount (SGD):", attestorStake);
+      
+      if (balance < stakeWei) {
+        console.error("INSUFFICIENT BALANCE!");
+        console.error(`Need ${ethers.formatUnits(stakeWei, 18)} SGD, but only have ${ethers.formatUnits(balance, 18)} SGD`);
+        return setStatus(`Insufficient SGD balance! Need ${ethers.formatUnits(stakeWei, 18)} SGD, have ${ethers.formatUnits(balance, 18)} SGD`);
+      }
+      
+      // Check if attestor is assigned to a stream
+      const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+      const isAssigned = await contract.isAssigned(walletAddr);
+      console.log("Is assigned to stream:", isAssigned);
+      
+      if (!isAssigned) {
+        console.error("FAILED: Attestor not assigned to any stream!");
+        return setStatus("Attestor must be assigned to a stream before committing. Use 'Assign Attestor' first.");
+      }
+      
+      const assignedStream = await contract.assignedStream(walletAddr);
+      console.log("Assigned to stream:", Number(assignedStream));
+      
+      // Check attestor phase
+      const phase = await contract.phase();
+      console.log("AttestorVoting phase:", Number(phase), "(0=Pending, 1=Commit, 2=Reveal, 3=Finalized)");
+      
+      if (Number(phase) !== 1) {
+        console.error("FAILED: Not in Commit phase!");
+        return setStatus(`Cannot commit: Phase is ${Number(phase)} (need phase 1=Commit). Current: ${Number(phase) === 0 ? 'Pending' : Number(phase) === 2 ? 'Reveal' : 'Finalized'}`);
+      }
+      
+      // First approve SGD token spending
+      console.log("Approving SGD token spending...");
+      setStatus("Approving SGD token for staking...");
+      const approveTx = await sgd.approve(attestorVotingAddr, stakeWei);
+      console.log("Approve tx hash:", approveTx.hash);
+      const approveReceipt = await approveTx.wait();
+      console.log("Approval confirmed, block:", approveReceipt.blockNumber);
+      
+      // Small delay to ensure nonce is synced (Hardhat local node issue)
+      console.log("Waiting for nonce sync...");
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Generate commitment
+      const saltHex = ethers.hexlify(ethers.randomBytes(32));
+      const saltBig = BigInt(saltHex);
+      const choiceBool = commitAttestorChoice === "true";
+      console.log("Generated salt:", saltHex);
+      console.log("Choice (bool):", choiceBool);
+      
+      const commitment = ethers.solidityPackedKeccak256(
+        ["bool", "uint256"],
+        [choiceBool, saltBig]
+      );
+      console.log("Generated commitment:", commitment);
+      
+      console.log("Calling contract.commit()...");
+      setStatus("Committing attestor vote with stake...");
+      
+      // Get fresh nonce to avoid conflicts
+      const currentNonce = await wallet.getNonce();
+      console.log("Using nonce:", currentNonce);
+      
+      const tx = await contract.commit(commitment, stakeWei, { nonce: currentNonce });
+      console.log("Commit tx hash:", tx.hash);
+      setStatus("commit tx: " + tx.hash);
+      
+      console.log("Waiting for transaction confirmation...");
+      const receipt = await tx.wait();
+      console.log("Transaction confirmed!");
+      console.log("Receipt:", receipt);
+      
+      setStatus(`✓ Commit stored for attestor ${commitAttestorIndex}, choice=${choiceBool}, stake=${attestorStake} SGD`);
+      
+      // Cache the commitment data
+      const cacheData = { choice: choiceBool, salt: saltBig, saltHex, stake: attestorStake };
+      console.log("Caching attestor data:", cacheData);
+      setAttestorSaltCache((prev) => {
+        const updated = { ...prev, [commitAttestorIndex]: cacheData };
+        console.log("Updated attestorSaltCache:", updated);
+        return updated;
+      });
+      
+      console.log("=== ATTESTOR COMMIT SUCCESS ===\n");
+    } catch (e) {
+      console.error("=== ATTESTOR COMMIT FAILED ===");
+      console.error("Error:", e);
+      console.error("Error message:", e.message);
+      console.error("Error reason:", e.reason);
+      setStatus("Attestor commit failed: " + (e.reason || e.message || e));
+    }
+  }
+
+  async function attestorReveal() {
+    console.log("\n=== ATTESTOR REVEAL START ===");
+    console.log("attestorVotingAddr:", attestorVotingAddr);
+    console.log("attestorSaltCache:", attestorSaltCache);
+    
+    if (!attestorVotingAddr) {
+      console.error("FAILED: AttestorVoting address missing");
+      return setStatus("AttestorVoting address missing");
+    }
+    
+    // Get all cached attestor commits
+    const cachedAttestors = Object.keys(attestorSaltCache).map(Number);
+    console.log("Cached attestor indices:", cachedAttestors);
+    
+    if (cachedAttestors.length === 0) {
+      console.warn("No cached attestor commits to reveal");
+      return setStatus("No cached attestor commits to reveal");
+    }
+    
+    setStatus(`Revealing votes for ${cachedAttestors.length} attestors...`);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const index of cachedAttestors) {
+      console.log(`\n--- Revealing attestor ${index} ---`);
+      const wallet = wallets[index];
+      if (!wallet) {
+        console.warn(`No wallet at index ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      const walletAddr = await wallet.getAddress();
+      console.log(`Attestor ${index} address:`, walletAddr);
+      
+      const data = attestorSaltCache[index];
+      if (!data) {
+        console.warn(`No cached commit for attestor ${index}`);
+        failCount++;
+        continue;
+      }
+      
+      console.log(`Reveal data - choice: ${data.choice}, salt: ${data.saltHex || data.salt.toString()}`);
+      
+      try {
+        const contract = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, wallet);
+        
+        // Check phase
+        const phase = await contract.phase();
+        console.log(`Phase: ${Number(phase)} (need 2=Reveal)`);
+        
+        if (Number(phase) !== 2) {
+          console.error(`FAILED: Not in Reveal phase! Phase is ${Number(phase)}`);
+          failCount++;
+          continue;
+        }
+        
+        console.log(`Calling contract.reveal(${data.choice}, ${data.salt.toString()})...`);
+        const tx = await contract.reveal(data.choice, data.salt);
+        console.log(`Reveal tx hash for attestor ${index}:`, tx.hash);
+        
+        await tx.wait();
+        console.log(`✓ Reveal confirmed for attestor ${index}`);
+        
+        successCount++;
+        setStatus(`Revealed ${successCount}/${cachedAttestors.length} attestors...`);
+      } catch (e) {
+        console.error(`Failed to reveal attestor ${index}:`);
+        console.error("Error:", e);
+        console.error("Error message:", e.message);
+        console.error("Error reason:", e.reason);
+        failCount++;
+      }
+    }
+    
+    console.log(`\n=== ATTESTOR REVEAL COMPLETE ===`);
+    console.log(`Success: ${successCount}, Failed: ${failCount}`);
+    setStatus(`✓ Revealed ${successCount} attestors (${failCount} failed)`);
   }
 
   async function doSettleAttestors() {
@@ -609,6 +1046,46 @@ export default function VotingPage() {
       });
     }
 
+    // Listen to AttestorVoting events
+    if (attestorVotingAddr) {
+      const av = new ethers.Contract(attestorVotingAddr, AttestorVotingArtifact.abi, provider);
+      
+      const onAttestorCommitted = (attestor, stream, stake, commitment, event) => {
+        console.log('AttestorVoting Committed event:', { attestor, stream: Number(stream), stake: stake.toString(), commitment });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorCommitted', attestor, stream: Number(stream), stake: stake.toString(), commitment, tx: event.transactionHash });
+      };
+      const onAttestorRevealed = (attestor, stream, choice, stake, event) => {
+        console.log('AttestorVoting Revealed event:', { attestor, stream: Number(stream), choice, stake: stake.toString() });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorRevealed', attestor, stream: Number(stream), choice, stake: stake.toString(), tx: event.transactionHash });
+      };
+      const onAttestorStreamSettled = (stream, outcome, event) => {
+        console.log('AttestorVoting StreamSettled event:', { stream: Number(stream), outcome });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorStreamSettled', stream: Number(stream), outcome, tx: event.transactionHash });
+      };
+      const onAttestorPhaseAdvanced = (newPhase, event) => {
+        console.log('AttestorVoting PhaseAdvanced event:', { newPhase: Number(newPhase) });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorPhaseAdvanced', newPhase: Number(newPhase), tx: event.transactionHash });
+      };
+      const onAttestorClaimed = (attestor, stream, payout, event) => {
+        console.log('AttestorVoting Claimed event:', { attestor, stream: Number(stream), payout: payout.toString() });
+        pushEvent({ id: Date.now() + Math.random(), type: 'AttestorClaimed', attestor, stream: Number(stream), payout: payout.toString(), tx: event.transactionHash });
+      };
+
+      try { av.on('Committed', onAttestorCommitted); } catch (e) { console.error('Failed to listen to Committed:', e); }
+      try { av.on('Revealed', onAttestorRevealed); } catch (e) { console.error('Failed to listen to Revealed:', e); }
+      try { av.on('StreamSettled', onAttestorStreamSettled); } catch (e) { console.error('Failed to listen to StreamSettled:', e); }
+      try { av.on('PhaseAdvanced', onAttestorPhaseAdvanced); } catch (e) { console.error('Failed to listen to PhaseAdvanced:', e); }
+      try { av.on('Claimed', onAttestorClaimed); } catch (e) { console.error('Failed to listen to Claimed:', e); }
+
+      cleanupFunctions.push(() => {
+        try { av.off('Committed', onAttestorCommitted); } catch (e) {}
+        try { av.off('Revealed', onAttestorRevealed); } catch (e) {}
+        try { av.off('StreamSettled', onAttestorStreamSettled); } catch (e) {}
+        try { av.off('PhaseAdvanced', onAttestorPhaseAdvanced); } catch (e) {}
+        try { av.off('Claimed', onAttestorClaimed); } catch (e) {}
+      });
+    }
+
     // Listen to Oracle events
     if (addresses.Oracle && eventId) {
       const oracle = new ethers.Contract(addresses.Oracle, OracleArtifact.abi, provider);
@@ -651,7 +1128,7 @@ export default function VotingPage() {
       cleanupFunctions.forEach(fn => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [donorVotingAddr, eventId]);
+  }, [donorVotingAddr, attestorVotingAddr, eventId]);
 
   return (
     <div style={{ padding: 20 }}>
@@ -688,34 +1165,9 @@ export default function VotingPage() {
       </section>
 
       <section style={{ marginBottom: 16 }}>
-        <h3>Deploy Voting Modules (optional)</h3>
+        <h3>Oracle Setup & Voting Control</h3>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={deployDonorVoting}>Deploy DonorVoting</button>
-          <button onClick={deployAttestorVoting}>Deploy AttestorVoting</button>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <div>DonorVoting: <code>{donorVotingAddr || "(set or deploy)"}</code></div>
-          <div>AttestorVoting: <code>{attestorVotingAddr || "(set or deploy)"}</code></div>
-        </div>
-        <div style={{ marginTop: 8, display: "grid", gap: 8, maxWidth: 600 }}>
-          <input
-            placeholder="Override DonorVoting address"
-            value={donorVotingAddr}
-            onChange={(e) => setDonorVotingAddr(e.target.value)}
-          />
-          <input
-            placeholder="Override AttestorVoting address"
-            value={attestorVotingAddr}
-            onChange={(e) => setAttestorVotingAddr(e.target.value)}
-          />
-        </div>
-      </section>
-
-      <section style={{ marginBottom: 16 }}>
-        <h3>Oracle Wiring</h3>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button onClick={doSetModules}>Set Modules</button>
-          <button onClick={doSetDeadlines}>Set Deadlines (+60s/+120s)</button>
+          <button onClick={doSetDeadlines}>Set Deadlines (+120s/+240s)</button>
           <button onClick={doAdvanceDonorPhase}>Advance Donor Phase</button>
           <button onClick={doAdvanceAttestorPhase}>Advance Attestor Phase</button>
           <button onClick={doAdvanceBothPhases}>Advance Both Phases</button>
@@ -736,9 +1188,112 @@ export default function VotingPage() {
           </div>
         )}
         <div style={{ marginTop: 12, display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#fff3cd", borderRadius: 4, fontSize: 12 }}>
+            <strong>ℹ️ Typical Setup:</strong> Donors (accounts 1-10), Attestors (accounts 11-18), Oracle (account 19)
+          </div>
+          
+          <div style={{ marginTop: 8 }}>
+            <strong>Assign Donors (who pledged funds)</strong>
+          </div>
+          {donorPledgesList.length === 0 ? (
+            <div style={{ padding: 8, backgroundColor: "#f8f9fa", borderRadius: 4, fontSize: 13, color: "#666" }}>
+              No donors with pledges found. Load event first or create pledges.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              {donorPledgesList.map((donor) => (
+                <div
+                  key={donor.address}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: 12,
+                    border: "1px solid #ddd",
+                    borderRadius: 6,
+                    backgroundColor: "#f8f9fa",
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontFamily: "monospace", fontWeight: "bold" }}>
+                      {short(donor.address)}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                      Pledged: {ethers.formatUnits(donor.amount, 18)} SGD
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 12, margin: 0 }}>
+                      Stream:
+                      <select
+                        value={donorStreamSelections[donor.address] || 0}
+                        onChange={(e) =>
+                          setDonorStreamSelections((prev) => ({
+                            ...prev,
+                            [donor.address]: Number(e.target.value),
+                          }))
+                        }
+                        style={{ marginLeft: 6, padding: 4 }}
+                      >
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                      </select>
+                    </label>
+                    <button
+                      onClick={() =>
+                        assignSpecificDonor(
+                          donor.address,
+                          donorStreamSelections[donor.address] || 0
+                        )
+                      }
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        backgroundColor: "#007bff",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Assign
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={fetchDonorsWithPledges}
+              style={{
+                padding: "6px 12px",
+                fontSize: 12,
+                backgroundColor: "#6c757d",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}
+            >
+              Refresh Donor List
+            </button>
+          </div>
+          
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #ddd" }}>
+            <strong>Assign Attestors (independent verifiers)</strong>
+          </div>
+          <div style={{ padding: 8, backgroundColor: "#ffe7e7", borderRadius: 4, fontSize: 11, marginBottom: 8 }}>
+            <strong>⚠️ Attestors must:</strong><br/>
+            1. Be registered in AttestorRegistry first<br/>
+            2. Approve SGD token spending for staking<br/>
+            3. Have enough SGD balance for stake (amount chosen during commit)<br/>
+            4. Stake is between sigmaMin and sigmaMax (configurable, check contract)
+          </div>
           <label>
-            Assign donor wallet index
-            <select value={assignDonorIndex} onChange={(e) => setAssignDonorIndex(Number(e.target.value))}>
+            Attestor wallet index
+            <select value={assignAttestorIndex} onChange={(e) => setAssignAttestorIndex(Number(e.target.value))}>
               {donorOptions()}
             </select>
           </label>
@@ -748,17 +1303,37 @@ export default function VotingPage() {
               type="number"
               min="0"
               max="2"
-              value={assignStream}
-              onChange={(e) => setAssignStream(Number(e.target.value))}
+              value={assignAttestorStream}
+              onChange={(e) => setAssignAttestorStream(Number(e.target.value))}
             />
           </label>
-          <button onClick={doAssignDonor}>Assign Donor to Stream</button>
+          <button onClick={doAssignAttestor}>Assign Attestor to Stream</button>
+          
+          <div style={{ marginTop: 16, padding: 8, backgroundColor: "#e7f3ff", borderRadius: 4, fontSize: 12 }}>
+            <strong>🎯 Phase Advancement:</strong><br/>
+            • Use "Advance Donor/Attestor Phase" AFTER setup is complete<br/>
+            • Pending → Commit: Opens voting (after deadlines set & voters assigned)<br/>
+            • Commit → Reveal: Must wait until commitDeadline passes<br/>
+            • Reveal → Finalized: Must wait until revealDeadline passes<br/>
+            • Use "Advance Both Phases" to move both donor & attestor together
+          </div>
         </div>
       </section>
 
       <section style={{ marginBottom: 16 }}>
         <h3>Donor Commit-Reveal</h3>
         <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#e7f3ff", borderRadius: 4, fontSize: 12, marginBottom: 8 }}>
+            <strong>📅 How Deadlines Work:</strong>
+            <div style={{ marginTop: 4 }}>
+              • <strong>Pending</strong> → Set deadlines first<br/>
+              • <strong>Commit Phase</strong> → Vote before commit deadline (vote is secret)<br/>
+              • <strong>Reveal Phase</strong> → Reveal vote after commit deadline, before reveal deadline<br/>
+              • <strong>Finalized</strong> → Voting closed, results calculated<br/>
+              • ⚠️ <strong>Late votes REVERT</strong> - you MUST vote before the deadline!
+            </div>
+          </div>
+          
           <div style={{ padding: 8, backgroundColor: "#f0f0f0", borderRadius: 4 }}>
             <strong>Current Phase:</strong> {donorPhase === null ? "Not loaded" : donorPhase === 0 ? "Pending" : donorPhase === 1 ? "Commit ✓" : donorPhase === 2 ? "Reveal ✓" : donorPhase === 3 ? "Finalized ✓" : "Unknown"}
             <button style={{ marginLeft: 8 }} onClick={refreshDonorPhase}>Refresh Phase</button>
@@ -816,6 +1391,58 @@ export default function VotingPage() {
               {Object.entries(saltCache).map(([idx, data]) => (
                 <li key={idx}>
                   Donor {idx}: choice={String(data.choice)} salt={data.saltHex}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ marginBottom: 16 }}>
+        <h3>Attestor Commit-Reveal (with Staking)</h3>
+        <div style={{ display: "grid", gap: 8, maxWidth: 600 }}>
+          <div style={{ padding: 8, backgroundColor: "#fff3cd", borderRadius: 4, fontSize: 12 }}>
+            <strong>💰 Attestor Staking:</strong><br/>
+            • Attestors stake SGD tokens when committing<br/>
+            • <strong>Correct vote</strong> → Get stake back + share of slashed funds<br/>
+            • <strong>Wrong vote</strong> → Stake is slashed and redistributed<br/>
+            • Stake amount: You choose (within sigmaMin/sigmaMax bounds)
+          </div>
+          
+          <label>
+            Attestor wallet index
+            <select value={commitAttestorIndex} onChange={(e) => setCommitAttestorIndex(Number(e.target.value))}>
+              {donorOptions()}
+            </select>
+          </label>
+          <label>
+            Vote choice
+            <select value={commitAttestorChoice} onChange={(e) => setCommitAttestorChoice(e.target.value)}>
+              <option value="true">Pass (true)</option>
+              <option value="false">Fail (false)</option>
+            </select>
+          </label>
+          <label>
+            Stake Amount (SGD tokens)
+            <input
+              type="text"
+              value={attestorStake}
+              onChange={(e) => setAttestorStake(e.target.value)}
+              placeholder="e.g., 1000"
+            />
+          </label>
+          <button onClick={attestorCommit}>
+            Commit Attestor Vote (with Stake)
+          </button>
+          <button onClick={() => attestorReveal(commitAttestorIndex)}>
+            Reveal Attestor Vote
+          </button>
+          <div style={{ fontSize: 13, color: "#444" }}>
+            Cached attestor commits:
+            <ul>
+              {Object.entries(attestorSaltCache).map(([idx, data]) => (
+                <li key={idx}>
+                  Attestor {idx}: choice={String(data.choice)} stake={data.stake} SGD salt={data.saltHex}
                 </li>
               ))}
             </ul>
@@ -900,6 +1527,14 @@ export default function VotingPage() {
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
                     </div>
                   )}
+                  {ev.type === 'DonorAssigned' && (
+                    <div>
+                      <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
+                      <div>donor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.donor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
                   {ev.type === 'OracleVoterAssigned' && (
                     <div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
@@ -912,6 +1547,45 @@ export default function VotingPage() {
                     <div>
                       <div>eventId: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.eventId)}</span></div>
                       <div>which: {ev.which}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorCommitted' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>stake: {ev.stake}</div>
+                      <div>commitment: <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{ev.commitment?.substring(0, 16)}...</span></div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorRevealed' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>choice: {String(ev.choice)}</div>
+                      <div>stake: {ev.stake}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorStreamSettled' && (
+                    <div>
+                      <div>stream: {ev.stream}</div>
+                      <div>outcome: {String(ev.outcome)}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorPhaseAdvanced' && (
+                    <div>
+                      <div>newPhase: {ev.newPhase}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
+                    </div>
+                  )}
+                  {ev.type === 'AttestorClaimed' && (
+                    <div>
+                      <div>attestor: <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{short(ev.attestor)}</span></div>
+                      <div>stream: {ev.stream}</div>
+                      <div>payout: {ev.payout}</div>
                       <div style={{ fontSize: 11, color: '#666' }}>tx: {ev.tx}</div>
                     </div>
                   )}
